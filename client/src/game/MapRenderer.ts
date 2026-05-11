@@ -1,6 +1,6 @@
 import * as PIXI from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { PolygonData } from '../components/Map';
+import type { PolygonData } from '../../../shared/src/types.ts';
 
 export class MapRenderer {
   public app: PIXI.Application;

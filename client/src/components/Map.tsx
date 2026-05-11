@@ -1,12 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MapRenderer } from '../game/MapRenderer.ts';
-
-export interface PolygonData {
-  id: string;
-  points: number[]; // [x, y, x, y, ...]
-  terrainColor: number;
-  ownerColor?: number;
-}
+import type { PolygonData } from '../../../shared/src/types.ts';
 
 interface MapProps {
   polygons: PolygonData[];
