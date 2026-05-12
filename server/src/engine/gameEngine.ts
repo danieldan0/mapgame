@@ -12,7 +12,7 @@ export function startTurn(gameState: GameState): void {
         Number(playerId),
         {
           roll: rollDie(),
-          hasActed: false,
+          hasActed: !playerHasTiles(gameState, Number(playerId)),
         },
       ])
     ),
@@ -21,13 +21,14 @@ export function startTurn(gameState: GameState): void {
 }
 
 export function handleAction(gameState: GameState, action: GameAction, actingPlayerId: number): ActionResult {
-  if (action.type === 'END_TURN') {
-    return { actionAccepted: false, stateChanged: false };
-  }
-
   const playerTurn = gameState.turnState.playerTurns[actingPlayerId];
   if (!playerTurn || playerTurn.hasActed) {
     return { actionAccepted: false, stateChanged: false };
+  }
+
+  if (action.type === 'END_TURN') {
+    playerTurn.hasActed = true;
+    return { actionAccepted: true, stateChanged: true };
   }
 
   const targetTileIds = uniqueIds(action.targetTileIds);
@@ -44,6 +45,20 @@ export function handleAction(gameState: GameState, action: GameAction, actingPla
 
 export function haveAllPlayersActed(gameState: GameState): boolean {
   return Object.values(gameState.turnState.playerTurns).every(playerTurn => playerTurn.hasActed);
+}
+
+export function skipPlayersWithNoTiles(gameState: GameState): boolean {
+  let stateChanged = false;
+
+  for (const playerId of Object.keys(gameState.players).map(Number)) {
+    const playerTurn = gameState.turnState.playerTurns[playerId];
+    if (playerTurn && !playerTurn.hasActed && !playerHasTiles(gameState, playerId)) {
+      playerTurn.hasActed = true;
+      stateChanged = true;
+    }
+  }
+
+  return stateChanged;
 }
 
 export function previewAttack(gameState: GameState, attackerId: number, defenderId: number): boolean {
@@ -189,4 +204,8 @@ function getDefenseRollKey(attackerId: number, defenderId: number): string {
 
 function rollDie(): number {
   return Math.floor(Math.random() * 6) + 1;
+}
+
+function playerHasTiles(gameState: GameState, playerId: number): boolean {
+  return Object.values(gameState.tiles).some(tile => tile.ownerId === playerId);
 }

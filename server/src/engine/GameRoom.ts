@@ -1,7 +1,7 @@
 import type { GameState, GameAction, Player, RoomInfo, PlayerInfo } from '@mapgame/shared';
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
-import { handleAction, haveAllPlayersActed, previewAttack, startTurn } from './gameEngine';
+import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startTurn } from './gameEngine';
 
 export class GameRoom {
   public id: string;
@@ -94,13 +94,14 @@ export class GameRoom {
 
   public handleAction(action: GameAction, playerId: number): boolean {
     const result = handleAction(this.state, action, playerId);
+    const skippedPlayersChanged = skipPlayersWithNoTiles(this.state);
 
     if (result.actionAccepted && haveAllPlayersActed(this.state)) {
       this.state.turn++;
       startTurn(this.state);
     }
 
-    return result.stateChanged;
+    return result.stateChanged || skippedPlayersChanged;
   }
 
   public previewAttack(attackerId: number, defenderId: number): boolean {

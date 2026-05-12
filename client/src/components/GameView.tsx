@@ -33,6 +33,7 @@ export const GameView: React.FC<GameViewProps> = ({
   const localPlayer = localPlayerId === null ? null : gameState?.players[localPlayerId] ?? null;
   const localTurn = localPlayerId === null ? null : gameState?.turnState.playerTurns[localPlayerId] ?? null;
   const enemyPlayers = Object.values(gameState?.players ?? {}).filter(player => player.id !== localPlayerId);
+  const hasOwnedTiles = localPlayerId !== null && Object.values(gameState?.tiles ?? {}).some(tile => tile.ownerId === localPlayerId);
 
   const selectedDefenderId = useMemo(() => {
     if (lockedDefenderId !== null) return lockedDefenderId;
@@ -88,7 +89,7 @@ export const GameView: React.FC<GameViewProps> = ({
   }, [actionType, claimBudget, defenseRoll, selectedDefenderId]);
 
   useEffect(() => {
-    if (!gameState || localPlayerId === null || selectedTileIds.length === 0) return;
+    if (!gameState || localPlayerId === null || localTurn?.hasActed || selectedTileIds.length === 0) return;
 
     const stillValid = isSelectionStillValid({
       gameState,
@@ -103,13 +104,32 @@ export const GameView: React.FC<GameViewProps> = ({
       setLockedDefenderId(null);
       setPlanNotice('Your current plan became impossible because the board changed.');
     }
-  }, [actionType, gameState, localPlayerId, selectedDefenderId, selectedTileIds]);
+  }, [actionType, gameState, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedTileIds]);
 
   const handlePolygonClick = (targetId: number) => {
     if (!gameState || localPlayerId === null || localTurn?.hasActed) return;
 
-    if (selectedTileIdSet.has(targetId) && lockedDefenderId === null) {
-      setSelectedTileIds(ids => ids.filter(id => id !== targetId));
+    if (selectedTileIdSet.has(targetId)) {
+      if (lockedDefenderId === null) {
+        setSelectedTileIds(ids => ids.filter(id => id !== targetId));
+        return;
+      }
+
+      const nextSelectedTileIds = selectedTileIds.filter(id => id !== targetId);
+      const canRemoveTile =
+        nextSelectedTileIds.length > 0 &&
+        isSelectionStillValid({
+          gameState,
+          localPlayerId,
+          actionType,
+          selectedTileIds: nextSelectedTileIds,
+          selectedDefenderId: lockedDefenderId,
+        });
+
+      if (canRemoveTile) {
+        setSelectedTileIds(nextSelectedTileIds);
+      }
+
       return;
     }
 
@@ -136,12 +156,28 @@ export const GameView: React.FC<GameViewProps> = ({
   const handleSubmitPlan = () => {
     if (!canSubmitPlan) return;
 
+    const submittedTileIds = selectedTileIds;
+    const submittedDefenderId = lockedDefenderId;
+
+    setSelectedTileIds([]);
+    setLockedDefenderId(null);
+    setPlanNotice(null);
+
     onAction({
       type: 'SUBMIT_PLAN',
       actionType,
-      targetTileIds: selectedTileIds,
-      defenderId: lockedDefenderId ?? undefined,
+      targetTileIds: submittedTileIds,
+      defenderId: submittedDefenderId ?? undefined,
     });
+  };
+
+  const handleSkipTurn = () => {
+    if (localTurn?.hasActed) return;
+
+    setSelectedTileIds([]);
+    setLockedDefenderId(null);
+    setPlanNotice(null);
+    onAction({ type: 'END_TURN' });
   };
 
   const handleRegenerate = () => {
@@ -163,6 +199,7 @@ export const GameView: React.FC<GameViewProps> = ({
         <div style={{ marginTop: '8px' }}>
           Roll: {localTurn?.roll ?? '-'} | Claims: {selectedTileIds.length}/{claimBudget}
           {localTurn?.hasActed && ' | Action submitted'}
+          {!hasOwnedTiles && ' | No tiles left'}
         </div>
         {actionType === 'ATTACK' && selectedDefenderId !== null && (
           <div style={{ marginTop: '6px' }}>
@@ -200,6 +237,9 @@ export const GameView: React.FC<GameViewProps> = ({
         <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button onClick={handleSubmitPlan} disabled={!canSubmitPlan} style={{ padding: '5px 10px', cursor: canSubmitPlan ? 'pointer' : 'not-allowed' }}>
             Submit Plan
+          </button>
+          <button onClick={handleSkipTurn} disabled={localTurn?.hasActed} style={{ padding: '5px 10px', cursor: localTurn?.hasActed ? 'not-allowed' : 'pointer' }}>
+            Skip Turn
           </button>
           <button onClick={handleRegenerate} style={{ padding: '5px 10px', cursor: 'pointer' }}>
             Regenerate Map
