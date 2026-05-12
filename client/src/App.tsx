@@ -1,78 +1,122 @@
-import { useState, useEffect } from 'react'
-import { Map } from './components/Map.tsx'
+import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
-import type { GameState, GameAction } from '../../shared/src/types.ts'
+import { GameView } from './components/GameView.tsx'
+import { Lobby } from './components/Lobby.tsx'
+import { Room } from './components/Room.tsx'
+import type { GameAction, GameState, RoomInfo } from '../../shared/src/types.ts'
+import './App.css'
 
 const socket = io('http://localhost:3000');
 
 // Hardcoded for singleplayer prototype
 const LOCAL_PLAYER_ID = 1;
 
+type ViewState = 'LOBBY' | 'ROOM' | 'GAME';
+
 function App() {
-  const [selectedTileId, setSelectedTileId] = useState<number | null>(null)
-  const [gameState, setGameState] = useState<GameState | null>(null)
+  const [viewState, setViewState] = useState<ViewState>('LOBBY');
+  const [roomsList, setRoomsList] = useState<RoomInfo[]>([]);
+  const [currentRoom, setCurrentRoom] = useState<RoomInfo | null>(null);
+  const [gameState, setGameState] = useState<GameState | null>(null);
 
   useEffect(() => {
+    socket.on('roomsList', (rooms: RoomInfo[]) => {
+      setRoomsList(rooms);
+    });
+
+    socket.on('roomUpdate', (room: RoomInfo) => {
+      setCurrentRoom(room);
+    });
+
+    socket.on('gameStarted', () => {
+      setViewState('GAME');
+    });
+
     socket.on('gameState', (newGameState: GameState) => {
       setGameState(newGameState);
     });
 
+    socket.on('error', (msg: string) => {
+      alert(`Error: ${msg}`);
+    });
+
     return () => {
+      socket.off('roomsList');
+      socket.off('roomUpdate');
+      socket.off('gameStarted');
       socket.off('gameState');
+      socket.off('error');
     };
   }, []);
 
-  const handlePolygonClick = (targetId: number) => {
-    if (!gameState) return;
-    
-    const targetTile = gameState.tiles[targetId];
-    if (!targetTile) return;
+  const handleCreateRoom = (playerName: string) => {
+    const roomOwnerName = playerName.trim() || 'Player';
+    socket.emit('setName', roomOwnerName);
+    socket.emit('createRoom', `${roomOwnerName}'s Room`);
+    setViewState('ROOM');
+  };
 
-    if (targetTile.ownerId === LOCAL_PLAYER_ID) {
-      setSelectedTileId(targetId);
-      console.log(`Selected tile: ${targetId}`);
-      return;
+  const handleJoinRoom = (roomId: string, playerName: string) => {
+    const trimmedName = playerName.trim();
+
+    if (trimmedName) {
+      socket.emit('setName', trimmedName);
     }
 
-    if (selectedTileId !== null) {
-      const sourceTile = gameState.tiles[selectedTileId];
-      
-      if (sourceTile && sourceTile.neighbors.includes(targetId)) {
-        if (targetTile.ownerId === null && targetTile.typeId !== 'sea') {
-          const action: GameAction = { type: 'EXPAND', sourceTileId: selectedTileId, targetTileId: targetId };
-          socket.emit('action', action);
-          console.log('Action: EXPAND sent');
-        } else if (targetTile.ownerId !== null && targetTile.ownerId !== LOCAL_PLAYER_ID) {
-          const action: GameAction = { type: 'ATTACK', sourceTileId: selectedTileId, targetTileId: targetId };
-          socket.emit('action', action);
-          console.log('Action: ATTACK sent');
-        }
-      } else {
-        setSelectedTileId(null);
-      }
-    }
-  }
+    socket.emit('joinRoom', roomId);
+    setViewState('ROOM');
+  };
+
+  const handleLeaveRoom = () => {
+    socket.emit('leaveRoom');
+    setCurrentRoom(null);
+    setGameState(null);
+    setViewState('LOBBY');
+  };
+
+  const handleSetReady = (isReady: boolean) => {
+    socket.emit('setReady', isReady);
+  };
+
+  const handleAction = (action: GameAction) => {
+    socket.emit('action', action);
+  };
 
   const handleRegenerate = () => {
     socket.emit('regenerateMap');
-    setSelectedTileId(null);
+  };
+
+  if (viewState === 'LOBBY') {
+    return (
+      <Lobby
+        roomsList={roomsList}
+        onCreateRoom={handleCreateRoom}
+        onJoinRoom={handleJoinRoom}
+      />
+    );
+  }
+
+  if (viewState === 'ROOM' && currentRoom) {
+    return (
+      <Room
+        currentRoom={currentRoom}
+        socketId={socket.id}
+        handleLeaveRoom={handleLeaveRoom}
+        handleSetReady={handleSetReady}
+      />
+    );
   }
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, background: 'rgba(255, 255, 255, 0.9)', padding: '10px 15px', borderRadius: '6px', color: '#333' }}>
-        <div><b>Map Game Prototype</b></div>
-        <div style={{ marginTop: '5px' }}>Player: Red | Enemy: Blue</div>
-        <div style={{ marginTop: '10px' }}>
-          {selectedTileId !== null ? `Selected Tile: ${selectedTileId} (Click adjacent to expand/attack)` : 'Click one of your (Red) tiles to select'}
-        </div>
-        <button onClick={handleRegenerate} style={{ marginTop: '15px', padding: '5px 10px', cursor: 'pointer' }}>
-          Regenerate Map
-        </button>
-      </div>
-      <Map gameState={gameState} onPolygonClick={handlePolygonClick} />
-    </div>
-  )
+    <GameView
+      currentRoom={currentRoom}
+      gameState={gameState}
+      localPlayerId={LOCAL_PLAYER_ID}
+      onAction={handleAction}
+      onRegenerate={handleRegenerate}
+      onLeaveRoom={handleLeaveRoom}
+    />
+  );
 }
 
 export default App

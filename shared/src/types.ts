@@ -25,8 +25,22 @@ export interface GameState {
   tileTypes: Record<string, TileType>;
 }
 
+export interface PlayerInfo {
+  id: string; // Socket ID or generated ID
+  name: string;
+  isReady: boolean;
+}
+
+export interface RoomInfo {
+  id: string;
+  name: string;
+  players: PlayerInfo[];
+  status: 'waiting' | 'playing';
+}
+
 // Action Types for Client -> Server communication
 export type GameAction = 
   | { type: 'ATTACK'; sourceTileId: number; targetTileId: number }
   | { type: 'EXPAND'; sourceTileId: number; targetTileId: number } // Claim unoccupied land
   | { type: 'END_TURN' };
+
