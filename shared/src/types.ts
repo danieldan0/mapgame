@@ -30,6 +30,8 @@ export type PlannedActionType = 'EXPAND' | 'ATTACK';
 
 export interface PlayerTurnState {
   roll: number;
+  power: number;
+  dieSize: number;
   hasActed: boolean;
 }
 
@@ -37,6 +39,8 @@ export interface DefenseRoll {
   attackerId: number;
   defenderId: number;
   roll: number;
+  power: number;
+  dieSize: number;
 }
 
 export interface TurnState {

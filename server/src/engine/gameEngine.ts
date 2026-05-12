@@ -11,7 +11,7 @@ export function startTurn(gameState: GameState): void {
       Object.keys(gameState.players).map(playerId => [
         Number(playerId),
         {
-          roll: rollDie(),
+          ...rollForPlayer(gameState, Number(playerId)),
           hasActed: !playerHasTiles(gameState, Number(playerId)),
         },
       ])
@@ -157,7 +157,7 @@ function getDefenseRoll(gameState: GameState, attackerId: number, defenderId: nu
   const defenseRoll = {
     attackerId,
     defenderId,
-    roll: rollDie(),
+    ...rollForPlayer(gameState, defenderId),
   };
   gameState.turnState.defenseRolls[key] = defenseRoll;
   return defenseRoll;
@@ -202,8 +202,27 @@ function getDefenseRollKey(attackerId: number, defenderId: number): string {
   return `${attackerId}:${defenderId}`;
 }
 
-function rollDie(): number {
-  return Math.floor(Math.random() * 6) + 1;
+function rollForPlayer(gameState: GameState, playerId: number): { roll: number; power: number; dieSize: number } {
+  const power = getPlayerPower(gameState, playerId);
+  const dieSize = 10 + power;
+
+  return {
+    roll: rollDie(dieSize),
+    power,
+    dieSize,
+  };
+}
+
+function getPlayerPower(gameState: GameState, playerId: number): number {
+  const ownedCityCount = Object.values(gameState.tiles).filter(tile => {
+    return tile.ownerId === playerId && tile.typeId === 'city';
+  }).length;
+
+  return ownedCityCount * 2;
+}
+
+function rollDie(dieSize: number): number {
+  return Math.floor(Math.random() * dieSize) + 1;
 }
 
 function playerHasTiles(gameState: GameState, playerId: number): boolean {

@@ -16,6 +16,12 @@ function getDefenseRollKey(attackerId: number, defenderId: number): string {
   return `${attackerId}:${defenderId}`;
 }
 
+function getDefenseRollLabel(gameState: GameState | null, attackerId: number | null, defenderId: number): string {
+  if (!gameState || attackerId === null) return '...';
+  const defenseRoll = gameState.turnState.defenseRolls[getDefenseRollKey(attackerId, defenderId)];
+  return defenseRoll ? `${defenseRoll.roll}/d${defenseRoll.dieSize}` : '...';
+}
+
 export const GameView: React.FC<GameViewProps> = ({
   currentRoom,
   gameState,
@@ -197,13 +203,13 @@ export const GameView: React.FC<GameViewProps> = ({
           {enemyPlayers.length > 0 && ` | Opponents: ${enemyPlayers.map(player => player.name).join(', ')}`}
         </div>
         <div style={{ marginTop: '8px' }}>
-          Roll: {localTurn?.roll ?? '-'} | Claims: {selectedTileIds.length}/{claimBudget}
+          Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Claims: {selectedTileIds.length}/{claimBudget}
           {localTurn?.hasActed && ' | Action submitted'}
           {!hasOwnedTiles && ' | No tiles left'}
         </div>
         {actionType === 'ATTACK' && selectedDefenderId !== null && (
           <div style={{ marginTop: '6px' }}>
-            Attack {localTurn?.roll ?? '-'} - Defense {defenseRoll ?? '...'} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}
+            Attack {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} - Defense {getDefenseRollLabel(gameState, localPlayerId, selectedDefenderId)} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}
           </div>
         )}
         {planNotice && (
