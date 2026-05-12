@@ -2,6 +2,11 @@ import * as PIXI from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { GameState } from '../../../shared/src/types.ts';
 
+interface MapHighlights {
+  claimableTileIds: Set<number>;
+  selectedTileIds: Set<number>;
+}
+
 export class MapRenderer {
   public app: PIXI.Application;
   public viewport!: Viewport;
@@ -9,6 +14,10 @@ export class MapRenderer {
   private polyContainer!: PIXI.Container;
   private clickCallback?: (id: number) => void;
   private container: HTMLDivElement;
+  private highlights: MapHighlights = {
+    claimableTileIds: new Set(),
+    selectedTileIds: new Set(),
+  };
 
   constructor(container: HTMLDivElement) {
     this.container = container;
@@ -44,13 +53,16 @@ export class MapRenderer {
     this.clickCallback = callback;
   }
 
-  public updateState(gameState: GameState) {
+  public updateState(gameState: GameState, highlights: MapHighlights = this.highlights) {
     if (!this.polyContainer) return;
+    this.highlights = highlights;
     
     this.polyContainer.removeChildren().forEach(child => child.destroy());
 
     Object.values(gameState.tiles).forEach((tile) => {
       const graphics = new PIXI.Graphics();
+      const isSelected = highlights.selectedTileIds.has(tile.id);
+      const isClaimable = highlights.claimableTileIds.has(tile.id);
       
       const drawPolygon = (isHovered: boolean) => {
         graphics.clear();
@@ -60,11 +72,23 @@ export class MapRenderer {
           baseColor = gameState.players[tile.ownerId]?.color || baseColor;
         }
 
-        const finalColor = isHovered ? this.lightenColor(baseColor, 30) : baseColor;
+        const finalColor = isHovered || isClaimable ? this.lightenColor(baseColor, 30) : baseColor;
 
         graphics.poly(tile.points);
         graphics.fill(finalColor);
         
+        if (isSelected) {
+          graphics.stroke({ width: 5, color: 0xFFFFFF, alpha: 1 });
+          graphics.zIndex = 2;
+          return;
+        }
+
+        if (isClaimable) {
+          graphics.stroke({ width: 4, color: 0xFFD700, alpha: 0.95 });
+          graphics.zIndex = 1;
+          return;
+        }
+
         // Add a small indicator for cities if they are owned
         if (tile.typeId === 'city' && tile.ownerId !== null) {
           graphics.stroke({ width: 4, color: 0xFFFFFF, alpha: 0.8 });

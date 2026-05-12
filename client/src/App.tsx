@@ -83,6 +83,10 @@ function App() {
     socket.emit('action', action);
   };
 
+  const handlePreviewAttack = (defenderId: number) => {
+    socket.emit('previewAttack', defenderId);
+  };
+
   const handleRegenerate = () => {
     socket.emit('regenerateMap');
   };
@@ -117,6 +121,7 @@ function App() {
       gameState={gameState}
       localPlayerId={localPlayerId}
       onAction={handleAction}
+      onPreviewAttack={handlePreviewAttack}
       onRegenerate={handleRegenerate}
       onLeaveRoom={handleLeaveRoom}
     />

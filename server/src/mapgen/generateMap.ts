@@ -93,6 +93,10 @@ export function generateMap(players: Record<number, Player> = DEFAULT_PLAYERS): 
     tiles,
     players: { ...players },
     turn: 1,
+    turnState: {
+      playerTurns: {},
+      defenseRolls: {},
+    },
     tileTypes: { ...DEFAULT_TILE_TYPES },
   };
 }

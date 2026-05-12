@@ -1,7 +1,7 @@
 import type { GameState, GameAction, Player, RoomInfo, PlayerInfo } from '@mapgame/shared';
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
-import { handleAction } from './gameEngine';
+import { handleAction, haveAllPlayersActed, previewAttack, startTurn } from './gameEngine';
 
 export class GameRoom {
   public id: string;
@@ -80,6 +80,7 @@ export class GameRoom {
   public startGame(): void {
     this.status = 'playing';
     this.state = generateMap(this.getGamePlayers());
+    startTurn(this.state);
   }
 
   public getState(): GameState {
@@ -88,10 +89,22 @@ export class GameRoom {
 
   public regenerateMap(): void {
     this.state = generateMap(this.getGamePlayers());
+    startTurn(this.state);
   }
 
   public handleAction(action: GameAction, playerId: number): boolean {
-    return handleAction(this.state, action, playerId);
+    const result = handleAction(this.state, action, playerId);
+
+    if (result.actionAccepted && haveAllPlayersActed(this.state)) {
+      this.state.turn++;
+      startTurn(this.state);
+    }
+
+    return result.stateChanged;
+  }
+
+  public previewAttack(attackerId: number, defenderId: number): boolean {
+    return previewAttack(this.state, attackerId, defenderId);
   }
 
   public getPlayerGameId(socketId: string): number | null {

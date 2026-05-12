@@ -4,10 +4,17 @@ import type { GameState } from '../../../shared/src/types.ts';
 
 interface MapProps {
   gameState: GameState | null;
+  claimableTileIds?: Set<number>;
+  selectedTileIds?: Set<number>;
   onPolygonClick?: (id: number) => void;
 }
 
-export const Map: React.FC<MapProps> = ({ gameState, onPolygonClick }) => {
+export const Map: React.FC<MapProps> = ({
+  gameState,
+  claimableTileIds = new Set(),
+  selectedTileIds = new Set(),
+  onPolygonClick
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MapRenderer | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -42,9 +49,9 @@ export const Map: React.FC<MapProps> = ({ gameState, onPolygonClick }) => {
 
   useEffect(() => {
     if (isReady && rendererRef.current && gameState) {
-      rendererRef.current.updateState(gameState);
+      rendererRef.current.updateState(gameState, { claimableTileIds, selectedTileIds });
     }
-  }, [gameState, isReady]);
+  }, [claimableTileIds, gameState, isReady, selectedTileIds]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 };

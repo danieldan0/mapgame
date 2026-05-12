@@ -130,6 +130,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('previewAttack', (defenderId: number) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (room && room.status === 'playing') {
+      const actingPlayerId = room.getPlayerGameId(socket.id);
+      if (actingPlayerId === null) return;
+
+      const stateChanged = room.previewAttack(actingPlayerId, defenderId);
+      if (stateChanged) {
+        io.to(currentRoomId).emit('gameState', room.getState());
+      }
+    }
+  });
+
   socket.on('action', (action: GameAction) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);

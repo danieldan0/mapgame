@@ -22,7 +22,26 @@ export interface GameState {
   tiles: Record<number, Tile>;
   players: Record<number, Player>;
   turn: number;
+  turnState: TurnState;
   tileTypes: Record<string, TileType>;
+}
+
+export type PlannedActionType = 'EXPAND' | 'ATTACK';
+
+export interface PlayerTurnState {
+  roll: number;
+  hasActed: boolean;
+}
+
+export interface DefenseRoll {
+  attackerId: number;
+  defenderId: number;
+  roll: number;
+}
+
+export interface TurnState {
+  playerTurns: Record<number, PlayerTurnState>;
+  defenseRolls: Record<string, DefenseRoll>;
 }
 
 export interface PlayerInfo {
@@ -42,7 +61,6 @@ export interface RoomInfo {
 
 // Action Types for Client -> Server communication
 export type GameAction = 
-  | { type: 'ATTACK'; sourceTileId: number; targetTileId: number }
-  | { type: 'EXPAND'; sourceTileId: number; targetTileId: number } // Claim unoccupied land
+  | { type: 'SUBMIT_PLAN'; actionType: PlannedActionType; targetTileIds: number[]; defenderId?: number }
   | { type: 'END_TURN' };
 
