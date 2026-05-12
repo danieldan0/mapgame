@@ -1,13 +1,13 @@
 import * as PIXI from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { PolygonData } from '../../../shared/src/types.ts';
+import type { GameState } from '../../../shared/src/types.ts';
 
 export class MapRenderer {
   public app: PIXI.Application;
   public viewport!: Viewport;
   
   private polyContainer!: PIXI.Container;
-  private clickCallback?: (id: string) => void;
+  private clickCallback?: (id: number) => void;
   private container: HTMLDivElement;
 
   constructor(container: HTMLDivElement) {
@@ -40,26 +40,36 @@ export class MapRenderer {
     this.viewport.addChild(this.polyContainer);
   }
 
-  public setClickCallback(callback?: (id: string) => void) {
+  public setClickCallback(callback?: (id: number) => void) {
     this.clickCallback = callback;
   }
 
-  public updatePolygons(polygons: PolygonData[]) {
+  public updateState(gameState: GameState) {
     if (!this.polyContainer) return;
     
     this.polyContainer.removeChildren().forEach(child => child.destroy());
 
-    polygons.forEach((polyData) => {
+    Object.values(gameState.tiles).forEach((tile) => {
       const graphics = new PIXI.Graphics();
       
       const drawPolygon = (isHovered: boolean) => {
         graphics.clear();
-        const baseColor = polyData.ownerColor ?? polyData.terrainColor;
+        
+        let baseColor = gameState.tileTypes[tile.typeId]?.color || 0xFFFFFF;
+        if (tile.ownerId !== null) {
+          baseColor = gameState.players[tile.ownerId]?.color || baseColor;
+        }
+
         const finalColor = isHovered ? this.lightenColor(baseColor, 30) : baseColor;
 
-        graphics.poly(polyData.points);
+        graphics.poly(tile.points);
         graphics.fill(finalColor);
         graphics.stroke({ width: 2, color: 0x111111, alpha: 1 });
+        
+        // Add a small indicator for cities if they are owned
+        if (tile.typeId === 'city' && tile.ownerId !== null) {
+           graphics.stroke({ width: 4, color: 0xFFFFFF, alpha: 0.8 });
+        }
       };
 
       drawPolygon(false);
@@ -73,7 +83,7 @@ export class MapRenderer {
       graphics.on('pointerdown', (e) => pointerDownPos = { x: e.global.x, y: e.global.y });
       graphics.on('pointerup', (e) => {
         const distance = Math.hypot(e.global.x - pointerDownPos.x, e.global.y - pointerDownPos.y);
-        if (distance < 5) this.clickCallback?.(polyData.id);
+        if (distance < 5) this.clickCallback?.(tile.id);
       });
 
       this.polyContainer.addChild(graphics);

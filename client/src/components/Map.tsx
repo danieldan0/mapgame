@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MapRenderer } from '../game/MapRenderer.ts';
-import type { PolygonData } from '../../../shared/src/types.ts';
+import type { GameState } from '../../../shared/src/types.ts';
 
 interface MapProps {
-  polygons: PolygonData[];
-  onPolygonClick?: (id: string) => void;
+  gameState: GameState | null;
+  onPolygonClick?: (id: number) => void;
 }
 
-export const Map: React.FC<MapProps> = ({ polygons, onPolygonClick }) => {
+export const Map: React.FC<MapProps> = ({ gameState, onPolygonClick }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MapRenderer | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -41,10 +41,10 @@ export const Map: React.FC<MapProps> = ({ polygons, onPolygonClick }) => {
   }, [onPolygonClick]);
 
   useEffect(() => {
-    if (isReady && rendererRef.current) {
-      rendererRef.current.updatePolygons(polygons);
+    if (isReady && rendererRef.current && gameState) {
+      rendererRef.current.updateState(gameState);
     }
-  }, [polygons, isReady]);
+  }, [gameState, isReady]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 };
