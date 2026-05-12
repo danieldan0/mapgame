@@ -46,6 +46,7 @@ export class MapRenderer {
     this.viewport.drag().pinch().wheel().decelerate();
 
     this.polyContainer = new PIXI.Container();
+    this.polyContainer.sortableChildren = true;
     this.viewport.addChild(this.polyContainer);
   }
 
@@ -78,22 +79,33 @@ export class MapRenderer {
         graphics.fill(finalColor);
         
         if (isSelected) {
-          graphics.stroke({ width: 5, color: 0xFFFFFF, alpha: 1 });
-          graphics.zIndex = 2;
+          graphics.poly(tile.points);
+          graphics.stroke({ width: 6, color: 0x00E5FF, alpha: 1 });
+          graphics.poly(tile.points);
+          graphics.stroke({ width: 2, color: 0x00151A, alpha: 0.9 });
+          if (tile.typeId === 'city') {
+            this.drawCityMarker(graphics, tile.points);
+          }
+          graphics.zIndex = 3;
           return;
         }
 
         if (isClaimable) {
+          graphics.poly(tile.points);
           graphics.stroke({ width: 4, color: 0xFFD700, alpha: 0.95 });
-          graphics.zIndex = 1;
+          if (tile.typeId === 'city') {
+            this.drawCityMarker(graphics, tile.points);
+          }
+          graphics.zIndex = 2;
           return;
         }
 
         // Add a small indicator for cities if they are owned
         if (tile.typeId === 'city' && tile.ownerId !== null) {
-          graphics.stroke({ width: 4, color: 0xFFFFFF, alpha: 0.8 });
+          this.drawCityMarker(graphics, tile.points);
           graphics.zIndex = 1; // Ensure cities are drawn above other tiles
         } else {
+          graphics.poly(tile.points);
           graphics.stroke({ width: 2, color: 0x111111, alpha: 1 });
         }
       };
@@ -125,5 +137,12 @@ export class MapRenderer {
     const g = Math.min(255, Math.floor(((color >> 8) & 0xff) * (1 + percent / 100)));
     const b = Math.min(255, Math.floor((color & 0xff) * (1 + percent / 100)));
     return (r << 16) | (g << 8) | b;
+  }
+
+  private drawCityMarker(graphics: PIXI.Graphics, points: number[]) {
+    graphics.poly(points);
+    graphics.stroke({ width: 7, color: 0x111111, alpha: 0.95, alignment: 0.35 });
+    graphics.poly(points);
+    graphics.stroke({ width: 3, color: 0xFFFFFF, alpha: 0.9, alignment: 0.35 });
   }
 }

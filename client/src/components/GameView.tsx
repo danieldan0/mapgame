@@ -22,6 +22,9 @@ function getDefenseRollLabel(gameState: GameState | null, attackerId: number | n
   return defenseRoll ? `${defenseRoll.roll}/d${defenseRoll.dieSize}` : '...';
 }
 
+const CLAIM_COST = 1;
+const SEA_TRAVEL_COST = 3;
+
 export const GameView: React.FC<GameViewProps> = ({
   currentRoom,
   gameState,
@@ -61,8 +64,20 @@ export const GameView: React.FC<GameViewProps> = ({
     return Math.max(0, localTurn.roll - defenseRoll);
   }, [actionType, defenseRoll, localTurn, selectedDefenderId]);
 
+  const selectedPlanCost = useMemo(() => {
+    if (!gameState || localPlayerId === null) return 0;
+
+    return getPlanCost({
+      gameState,
+      localPlayerId,
+      actionType,
+      selectedTileIds,
+      selectedDefenderId,
+    });
+  }, [actionType, gameState, localPlayerId, selectedDefenderId, selectedTileIds]);
+
   const claimableTileIds = useMemo(() => {
-    if (!gameState || localPlayerId === null || localTurn?.hasActed || selectedTileIds.length >= claimBudget) {
+    if (!gameState || localPlayerId === null || localTurn?.hasActed || selectedPlanCost >= claimBudget) {
       return new Set<number>();
     }
 
@@ -72,8 +87,9 @@ export const GameView: React.FC<GameViewProps> = ({
       actionType,
       selectedTileIds,
       selectedDefenderId,
+      remainingBudget: claimBudget - selectedPlanCost,
     });
-  }, [actionType, claimBudget, gameState, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedTileIds]);
+  }, [actionType, claimBudget, gameState, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedPlanCost, selectedTileIds]);
 
   const selectedTileIdSet = useMemo(() => new Set(selectedTileIds), [selectedTileIds]);
   const isCanceledAttack =
@@ -81,7 +97,7 @@ export const GameView: React.FC<GameViewProps> = ({
     lockedDefenderId !== null &&
     defenseRoll !== null &&
     claimBudget === 0;
-  const canSubmitPlan = (selectedTileIds.length > 0 || isCanceledAttack) && !localTurn?.hasActed;
+  const canSubmitPlan = (selectedTileIds.length > 0 || isCanceledAttack) && selectedPlanCost <= claimBudget && !localTurn?.hasActed;
 
   useEffect(() => {
     setSelectedTileIds([]);
@@ -91,8 +107,17 @@ export const GameView: React.FC<GameViewProps> = ({
 
   useEffect(() => {
     if (actionType === 'ATTACK' && selectedDefenderId !== null && defenseRoll === null) return;
-    setSelectedTileIds(ids => ids.length > claimBudget ? ids.slice(0, claimBudget) : ids);
-  }, [actionType, claimBudget, defenseRoll, selectedDefenderId]);
+    if (!gameState || localPlayerId === null) return;
+
+    setSelectedTileIds(ids => trimSelectionToBudget({
+      gameState,
+      localPlayerId,
+      actionType,
+      selectedTileIds: ids,
+      selectedDefenderId,
+      claimBudget,
+    }));
+  }, [actionType, claimBudget, defenseRoll, gameState, localPlayerId, selectedDefenderId]);
 
   useEffect(() => {
     if (!gameState || localPlayerId === null || localTurn?.hasActed || selectedTileIds.length === 0) return;
@@ -203,7 +228,7 @@ export const GameView: React.FC<GameViewProps> = ({
           {enemyPlayers.length > 0 && ` | Opponents: ${enemyPlayers.map(player => player.name).join(', ')}`}
         </div>
         <div style={{ marginTop: '8px' }}>
-          Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Claims: {selectedTileIds.length}/{claimBudget}
+          Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Points: {selectedPlanCost}/{claimBudget}
           {localTurn?.hasActed && ' | Action submitted'}
           {!hasOwnedTiles && ' | No tiles left'}
         </div>
@@ -271,12 +296,14 @@ function getClaimableTileIds({
   actionType,
   selectedTileIds,
   selectedDefenderId,
+  remainingBudget,
 }: {
   gameState: GameState;
   localPlayerId: number;
   actionType: PlannedActionType;
   selectedTileIds: number[];
   selectedDefenderId: number | null;
+  remainingBudget: number;
 }): Set<number> {
   const selectedTileIdSet = new Set(selectedTileIds);
 
@@ -284,7 +311,7 @@ function getClaimableTileIds({
     Object.values(gameState.tiles)
       .filter(tile => !selectedTileIdSet.has(tile.id))
       .filter(tile => canClaimTile(tile, actionType, localPlayerId, selectedDefenderId))
-      .filter(tile => isAdjacentToOwnedOrSelected(gameState, tile, localPlayerId, selectedTileIdSet))
+      .filter(tile => getClaimCost(gameState, tile, localPlayerId, selectedTileIdSet) <= remainingBudget)
       .map(tile => tile.id)
   );
 }
@@ -306,16 +333,120 @@ function canClaimTile(
   return tile.ownerId !== null && tile.ownerId !== localPlayerId;
 }
 
-function isAdjacentToOwnedOrSelected(
+function getPlanCost({
+  gameState,
+  localPlayerId,
+  actionType,
+  selectedTileIds,
+  selectedDefenderId,
+}: {
+  gameState: GameState;
+  localPlayerId: number;
+  actionType: PlannedActionType;
+  selectedTileIds: number[];
+  selectedDefenderId: number | null;
+}): number {
+  const remainingTargets = new Set(selectedTileIds);
+  const claimedThisPlan = new Set<number>();
+  let totalCost = 0;
+
+  while (remainingTargets.size > 0) {
+    let cheapestClaim: { tileId: number; cost: number } | null = null;
+
+    for (const tileId of remainingTargets) {
+      const tile = gameState.tiles[tileId];
+      if (!tile || !canClaimTile(tile, actionType, localPlayerId, selectedDefenderId)) continue;
+
+      const cost = getClaimCost(gameState, tile, localPlayerId, claimedThisPlan);
+      if (cost !== Infinity && (!cheapestClaim || cost < cheapestClaim.cost)) {
+        cheapestClaim = { tileId, cost };
+      }
+    }
+
+    if (!cheapestClaim) return Infinity;
+
+    totalCost += cheapestClaim.cost;
+    remainingTargets.delete(cheapestClaim.tileId);
+    claimedThisPlan.add(cheapestClaim.tileId);
+  }
+
+  return totalCost;
+}
+
+function getClaimCost(
   gameState: GameState,
-  tile: Tile,
+  targetTile: Tile,
   localPlayerId: number,
   selectedTileIds: Set<number>
-): boolean {
-  return tile.neighbors.some(neighborId => {
+): number {
+  const visitedSeaTileIds = new Set<number>();
+  const queue: Array<{ tileId: number; cost: number }> = [];
+
+  for (const neighborId of targetTile.neighbors) {
     const neighbor = gameState.tiles[neighborId];
-    return neighbor?.ownerId === localPlayerId || selectedTileIds.has(neighborId);
-  });
+    if (!neighbor) continue;
+
+    if (neighbor.ownerId === localPlayerId || selectedTileIds.has(neighborId)) {
+      return CLAIM_COST;
+    }
+
+    if (neighbor.typeId === 'sea') {
+      queue.push({ tileId: neighborId, cost: SEA_TRAVEL_COST + CLAIM_COST });
+      visitedSeaTileIds.add(neighborId);
+    }
+  }
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const current = queue.shift();
+    if (!current) break;
+
+    const tile = gameState.tiles[current.tileId];
+    if (!tile) continue;
+
+    for (const neighborId of tile.neighbors) {
+      const neighbor = gameState.tiles[neighborId];
+      if (!neighbor) continue;
+
+      if (neighbor.ownerId === localPlayerId || selectedTileIds.has(neighborId)) {
+        return current.cost;
+      }
+
+      if (neighbor.typeId === 'sea' && !visitedSeaTileIds.has(neighborId)) {
+        visitedSeaTileIds.add(neighborId);
+        queue.push({ tileId: neighborId, cost: current.cost + SEA_TRAVEL_COST });
+      }
+    }
+  }
+
+  return Infinity;
+}
+
+function trimSelectionToBudget({
+  gameState,
+  localPlayerId,
+  actionType,
+  selectedTileIds,
+  selectedDefenderId,
+  claimBudget,
+}: {
+  gameState: GameState;
+  localPlayerId: number;
+  actionType: PlannedActionType;
+  selectedTileIds: number[];
+  selectedDefenderId: number | null;
+  claimBudget: number;
+}): number[] {
+  const trimmedTileIds = [...selectedTileIds];
+
+  while (
+    trimmedTileIds.length > 0 &&
+    getPlanCost({ gameState, localPlayerId, actionType, selectedTileIds: trimmedTileIds, selectedDefenderId }) > claimBudget
+  ) {
+    trimmedTileIds.pop();
+  }
+
+  return trimmedTileIds;
 }
 
 function isSelectionStillValid({
@@ -339,10 +470,7 @@ function isSelectionStillValid({
       const tile = gameState.tiles[tileId];
       if (!tile || !canClaimTile(tile, actionType, localPlayerId, selectedDefenderId)) return false;
 
-      return tile.neighbors.some(neighborId => {
-        const neighbor = gameState.tiles[neighborId];
-        return neighbor?.ownerId === localPlayerId || claimableTargets.has(neighborId);
-      });
+      return getClaimCost(gameState, tile, localPlayerId, claimableTargets) !== Infinity;
     });
 
     if (nextClaimableTileId === undefined) {

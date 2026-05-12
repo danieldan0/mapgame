@@ -5,6 +5,9 @@ interface ActionResult {
   stateChanged: boolean;
 }
 
+const CLAIM_COST = 1;
+const SEA_TRAVEL_COST = 3;
+
 export function startTurn(gameState: GameState): void {
   gameState.turnState = {
     playerTurns: Object.fromEntries(
@@ -68,9 +71,7 @@ export function previewAttack(gameState: GameState, attackerId: number, defender
   }
 
   const hasAttackableBorder = Object.values(gameState.tiles).some(tile => {
-    return tile.ownerId === defenderId && tile.neighbors.some(neighborId => {
-      return gameState.tiles[neighborId]?.ownerId === attackerId;
-    });
+    return tile.ownerId === defenderId && getClaimCost(gameState, attackerId, tile, new Set()) <= playerTurn.roll;
   });
   if (!hasAttackableBorder) return false;
 
@@ -84,16 +85,11 @@ function submitExpandPlan(
   targetTileIds: number[],
   claimBudget: number
 ): ActionResult {
-  if (targetTileIds.length > claimBudget) {
+  if (getPlanCost(gameState, actingPlayerId, targetTileIds, tile => tile.ownerId === null && tile.typeId !== 'sea') > claimBudget) {
     return { actionAccepted: false, stateChanged: false };
   }
 
-  const isValid = isContiguousClaim(
-    gameState,
-    actingPlayerId,
-    targetTileIds,
-    tile => tile.ownerId === null && tile.typeId !== 'sea'
-  );
+  const isValid = isReachableClaimPlan(gameState, actingPlayerId, targetTileIds, tile => tile.ownerId === null && tile.typeId !== 'sea');
   if (!isValid) {
     return { actionAccepted: false, stateChanged: false };
   }
@@ -122,7 +118,7 @@ function submitAttackPlan(
   const defenseRoll = getDefenseRoll(gameState, actingPlayerId, defenderId);
   const claimBudget = Math.max(0, attackRoll - defenseRoll.roll);
 
-  if (targetTileIds.length > claimBudget) {
+  if (getPlanCost(gameState, actingPlayerId, targetTileIds, tile => tile.ownerId === defenderId) > claimBudget) {
     return { actionAccepted: false, stateChanged: true };
   }
 
@@ -131,12 +127,7 @@ function submitAttackPlan(
     return { actionAccepted: true, stateChanged: true };
   }
 
-  const isValid = isContiguousClaim(
-    gameState,
-    actingPlayerId,
-    targetTileIds,
-    tile => tile.ownerId === defenderId
-  );
+  const isValid = isReachableClaimPlan(gameState, actingPlayerId, targetTileIds, tile => tile.ownerId === defenderId);
   if (!isValid) {
     return { actionAccepted: false, stateChanged: true };
   }
@@ -163,35 +154,97 @@ function getDefenseRoll(gameState: GameState, attackerId: number, defenderId: nu
   return defenseRoll;
 }
 
-function isContiguousClaim(
+function isReachableClaimPlan(
   gameState: GameState,
   actingPlayerId: number,
   targetTileIds: number[],
   canClaimTile: (tile: Tile) => boolean
 ): boolean {
+  return getPlanCost(gameState, actingPlayerId, targetTileIds, canClaimTile) !== Infinity;
+}
+
+function getPlanCost(
+  gameState: GameState,
+  actingPlayerId: number,
+  targetTileIds: number[],
+  canClaimTile: (tile: Tile) => boolean
+): number {
   const remainingTargets = new Set(targetTileIds);
   const claimedThisPlan = new Set<number>();
+  let totalCost = 0;
 
   while (remainingTargets.size > 0) {
-    const claimableNow = Array.from(remainingTargets).find(tileId => {
+    let cheapestClaim: { tileId: number; cost: number } | null = null;
+
+    for (const tileId of remainingTargets) {
       const tile = gameState.tiles[tileId];
-      if (!tile || !canClaimTile(tile)) return false;
+      if (!tile || !canClaimTile(tile)) continue;
 
-      return tile.neighbors.some(neighborId => {
-        const neighbor = gameState.tiles[neighborId];
-        return neighbor?.ownerId === actingPlayerId || claimedThisPlan.has(neighborId);
-      });
-    });
-
-    if (claimableNow === undefined) {
-      return false;
+      const cost = getClaimCost(gameState, actingPlayerId, tile, claimedThisPlan);
+      if (cost !== Infinity && (!cheapestClaim || cost < cheapestClaim.cost)) {
+        cheapestClaim = { tileId, cost };
+      }
     }
 
-    remainingTargets.delete(claimableNow);
-    claimedThisPlan.add(claimableNow);
+    if (!cheapestClaim) {
+      return Infinity;
+    }
+
+    totalCost += cheapestClaim.cost;
+    remainingTargets.delete(cheapestClaim.tileId);
+    claimedThisPlan.add(cheapestClaim.tileId);
   }
 
-  return true;
+  return totalCost;
+}
+
+function getClaimCost(
+  gameState: GameState,
+  actingPlayerId: number,
+  targetTile: Tile,
+  claimedThisPlan: Set<number>
+): number {
+  const visitedSeaTileIds = new Set<number>();
+  const queue: Array<{ tileId: number; cost: number }> = [];
+
+  for (const neighborId of targetTile.neighbors) {
+    const neighbor = gameState.tiles[neighborId];
+    if (!neighbor) continue;
+
+    if (neighbor.ownerId === actingPlayerId || claimedThisPlan.has(neighborId)) {
+      return CLAIM_COST;
+    }
+
+    if (neighbor.typeId === 'sea') {
+      queue.push({ tileId: neighborId, cost: SEA_TRAVEL_COST + CLAIM_COST });
+      visitedSeaTileIds.add(neighborId);
+    }
+  }
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const current = queue.shift();
+    if (!current) break;
+
+    const tile = gameState.tiles[current.tileId];
+    if (!tile) continue;
+
+    for (const neighborId of tile.neighbors) {
+      const neighbor = gameState.tiles[neighborId];
+      if (!neighbor) continue;
+
+      if (neighbor.ownerId === actingPlayerId || claimedThisPlan.has(neighborId)) {
+        return current.cost;
+      }
+
+      if (neighbor.typeId === 'sea' && !visitedSeaTileIds.has(neighborId)) {
+        visitedSeaTileIds.add(neighborId);
+        queue.push({ tileId: neighborId, cost: current.cost + SEA_TRAVEL_COST });
+      }
+    }
+  }
+
+  return Infinity;
 }
 
 function uniqueIds(ids: number[]): number[] {
