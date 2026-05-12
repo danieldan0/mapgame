@@ -8,9 +8,6 @@ import './App.css'
 
 const socket = io('http://localhost:3000');
 
-// Hardcoded for singleplayer prototype
-const LOCAL_PLAYER_ID = 1;
-
 type ViewState = 'LOBBY' | 'ROOM' | 'GAME';
 
 function App() {
@@ -78,6 +75,10 @@ function App() {
     socket.emit('setReady', isReady);
   };
 
+  const handleSetColor = (color: number) => {
+    socket.emit('setColor', color);
+  };
+
   const handleAction = (action: GameAction) => {
     socket.emit('action', action);
   };
@@ -103,15 +104,18 @@ function App() {
         socketId={socket.id}
         handleLeaveRoom={handleLeaveRoom}
         handleSetReady={handleSetReady}
+        handleSetColor={handleSetColor}
       />
     );
   }
+
+  const localPlayerId = currentRoom?.players.find(player => player.id === socket.id)?.playerId ?? null;
 
   return (
     <GameView
       currentRoom={currentRoom}
       gameState={gameState}
-      localPlayerId={LOCAL_PLAYER_ID}
+      localPlayerId={localPlayerId}
       onAction={handleAction}
       onRegenerate={handleRegenerate}
       onLeaveRoom={handleLeaveRoom}

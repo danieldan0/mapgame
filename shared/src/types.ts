@@ -27,7 +27,9 @@ export interface GameState {
 
 export interface PlayerInfo {
   id: string; // Socket ID or generated ID
+  playerId: number;
   name: string;
+  color: number;
   isReady: boolean;
 }
 

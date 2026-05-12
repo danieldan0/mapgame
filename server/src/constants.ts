@@ -14,3 +14,12 @@ export const DEFAULT_PLAYERS: Record<number, Player> = {
   1: { id: 1, name: 'Player 1', color: 0xFF4500 },
   2: { id: 2, name: 'Player 2', color: 0x1E90FF },
 };
+
+export const PLAYER_COLORS = [
+  0xFF4500,
+  0x1E90FF,
+  0x32CD32,
+  0xFFD700,
+  0xBA55D3,
+  0x00CED1,
+];

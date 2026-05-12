@@ -64,11 +64,13 @@ export class MapRenderer {
 
         graphics.poly(tile.points);
         graphics.fill(finalColor);
-        graphics.stroke({ width: 2, color: 0x111111, alpha: 1 });
         
         // Add a small indicator for cities if they are owned
         if (tile.typeId === 'city' && tile.ownerId !== null) {
-           graphics.stroke({ width: 4, color: 0xFFFFFF, alpha: 0.8 });
+          graphics.stroke({ width: 4, color: 0xFFFFFF, alpha: 0.8 });
+          graphics.zIndex = 1; // Ensure cities are drawn above other tiles
+        } else {
+          graphics.stroke({ width: 2, color: 0x111111, alpha: 1 });
         }
       };
 

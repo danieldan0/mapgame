@@ -104,6 +104,22 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('setColor', (color: number) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (room && room.status === 'waiting') {
+      const colorChanged = room.setPlayerColor(socket.id, color);
+
+      if (colorChanged) {
+        io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+        broadcastRoomsList();
+      } else {
+        socket.emit('error', 'Color is unavailable');
+      }
+    }
+  });
+
   // Game actions
   socket.on('regenerateMap', () => {
     if (!currentRoomId) return;
@@ -118,9 +134,8 @@ io.on('connection', (socket) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (room && room.status === 'playing') {
-      // For singleplayer prototype, assume player 1 is acting
-      // TODO: Map socket.id to actual player ID in game state
-      const actingPlayerId = 1; 
+      const actingPlayerId = room.getPlayerGameId(socket.id);
+      if (actingPlayerId === null) return;
       
       const stateChanged = room.handleAction(action, actingPlayerId);
       

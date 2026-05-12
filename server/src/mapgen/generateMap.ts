@@ -1,8 +1,8 @@
 import { Delaunay } from 'd3-delaunay';
-import type { GameState, Tile } from '@mapgame/shared';
+import type { GameState, Player, Tile } from '@mapgame/shared';
 import { MAP_WIDTH, MAP_HEIGHT, NUM_POINTS, DEFAULT_TILE_TYPES, DEFAULT_PLAYERS } from '../constants';
 
-export function generateMap(): GameState {
+export function generateMap(players: Record<number, Player> = DEFAULT_PLAYERS): GameState {
   const points = new Float64Array(NUM_POINTS * 2);
   for (let i = 0; i < NUM_POINTS; i++) {
     points[i * 2] = Math.random() * MAP_WIDTH;
@@ -79,7 +79,7 @@ export function generateMap(): GameState {
   }
 
   // 3. Assign starting locations to players
-  const playerIds = [1, 2];
+  const playerIds = Object.keys(players).map(Number);
   for (const playerId of playerIds) {
     // Find a random land or city tile that is not owned
     const availableStartTiles = Object.values(tiles).filter(t => t.ownerId === null && t.typeId !== 'sea');
@@ -91,7 +91,7 @@ export function generateMap(): GameState {
   
   return {
     tiles,
-    players: { ...DEFAULT_PLAYERS },
+    players: { ...players },
     turn: 1,
     tileTypes: { ...DEFAULT_TILE_TYPES },
   };
