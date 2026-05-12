@@ -7,6 +7,7 @@ interface ActionResult {
 
 const CLAIM_COST = 1;
 const SEA_TRAVEL_COST = 3;
+const MAX_ENCIRCLED_REGION_SIZE = 5;
 
 export function startTurn(gameState: GameState): void {
   gameState.turnState = {
@@ -97,6 +98,7 @@ function submitExpandPlan(
   for (const tileId of targetTileIds) {
     gameState.tiles[tileId].ownerId = actingPlayerId;
   }
+  applyEncirclement(gameState, actingPlayerId);
   gameState.turnState.playerTurns[actingPlayerId].hasActed = true;
 
   return { actionAccepted: true, stateChanged: true };
@@ -135,9 +137,89 @@ function submitAttackPlan(
   for (const tileId of targetTileIds) {
     gameState.tiles[tileId].ownerId = actingPlayerId;
   }
+  applyEncirclement(gameState, actingPlayerId);
   gameState.turnState.playerTurns[actingPlayerId].hasActed = true;
 
   return { actionAccepted: true, stateChanged: true };
+}
+
+function applyEncirclement(gameState: GameState, actingPlayerId: number): void {
+  const visitedTileIds = new Set<number>();
+
+  for (const tile of Object.values(gameState.tiles)) {
+    if (
+      visitedTileIds.has(tile.id) ||
+      tile.ownerId === actingPlayerId ||
+      tile.typeId === 'sea' ||
+      isCoastalTile(gameState, tile)
+    ) {
+      continue;
+    }
+
+    const region = collectEncirclementRegion(gameState, tile, actingPlayerId, visitedTileIds);
+
+    if (
+      region.tileIds.length > 0 &&
+      region.tileIds.length <= MAX_ENCIRCLED_REGION_SIZE &&
+      region.isFullySurrounded
+    ) {
+      for (const tileId of region.tileIds) {
+        gameState.tiles[tileId].ownerId = actingPlayerId;
+      }
+    }
+  }
+}
+
+function collectEncirclementRegion(
+  gameState: GameState,
+  startTile: Tile,
+  actingPlayerId: number,
+  visitedTileIds: Set<number>
+): { tileIds: number[]; isFullySurrounded: boolean } {
+  const tileIds: number[] = [];
+  const queue = [startTile.id];
+  let isFullySurrounded = true;
+
+  visitedTileIds.add(startTile.id);
+
+  while (queue.length > 0) {
+    const tileId = queue.shift();
+    if (tileId === undefined) break;
+
+    const tile = gameState.tiles[tileId];
+    if (!tile) continue;
+
+    tileIds.push(tile.id);
+
+    if (tile.typeId === 'sea' || isCoastalTile(gameState, tile)) {
+      isFullySurrounded = false;
+    }
+
+    for (const neighborId of tile.neighbors) {
+      const neighbor = gameState.tiles[neighborId];
+      if (!neighbor) continue;
+
+      if (neighbor.ownerId === actingPlayerId) {
+        continue;
+      }
+
+      if (neighbor.typeId === 'sea' || isCoastalTile(gameState, neighbor)) {
+        isFullySurrounded = false;
+        continue;
+      }
+
+      if (!visitedTileIds.has(neighborId)) {
+        visitedTileIds.add(neighborId);
+        queue.push(neighborId);
+      }
+    }
+  }
+
+  return { tileIds, isFullySurrounded };
+}
+
+function isCoastalTile(gameState: GameState, tile: Tile): boolean {
+  return tile.neighbors.some(neighborId => gameState.tiles[neighborId]?.typeId === 'sea');
 }
 
 function getDefenseRoll(gameState: GameState, attackerId: number, defenderId: number) {
