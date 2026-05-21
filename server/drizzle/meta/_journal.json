@@ -15,6 +15,20 @@
       "when": 1779380831855,
       "tag": "0001_numerous_redwing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779392394574,
+      "tag": "0002_cooing_professor_monster",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779393600000,
+      "tag": "0003_hash_room_passwords",
+      "breakpoints": true
     }
   ]
 }

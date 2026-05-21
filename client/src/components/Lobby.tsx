@@ -95,12 +95,12 @@ export const Lobby: React.FC<LobbyProps> = ({
           {roomsList.map(room => (
             <li key={room.id} style={{ border: '1px solid #ccc', padding: '10px', marginBottom: '10px', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <strong>{room.name}</strong> - {room.status} ({room.players.length}/{room.maxPlayers} players)
+                <strong>{room.name}</strong> - {room.status} ({countPlayers(room)}/{room.maxPlayers} players)
                 {room.hasPassword && <span> - Password</span>}
               </div>
               <button
                 onClick={() => handleJoinRoom(room)}
-                disabled={room.status !== 'waiting' || room.players.length >= room.maxPlayers}
+                disabled={room.status !== 'waiting' || countPlayers(room) >= room.maxPlayers}
                 style={{ padding: '5px 10px' }}
               >
                 Join
@@ -112,3 +112,7 @@ export const Lobby: React.FC<LobbyProps> = ({
     </div>
   );
 };
+
+function countPlayers(room: RoomInfo): number {
+  return room.players.filter(player => player.roles.includes('player')).length;
+}

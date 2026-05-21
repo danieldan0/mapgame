@@ -1,7 +1,8 @@
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import type { CreateRoomRequest, GameAction, InviteRoomInfo, JoinRoomRequest, RoomInfo, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import bcrypt from 'bcryptjs';
+import type { CreateRoomRequest, GameAction, InviteRoomInfo, JoinRoomRequest, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { GameRoom } from './engine/GameRoom';
 import { v4 as uuidv4 } from 'uuid';
 import { runMigrations } from './db';
@@ -62,6 +63,25 @@ function normalizeJoinRoomRequest(request: string | JoinRoomRequest): JoinRoomRe
   };
 }
 
+async function hashRoomPassword(password?: string): Promise<string | undefined> {
+  const trimmed = password?.trim();
+  if (!trimmed) return undefined;
+  return bcrypt.hash(trimmed, 10);
+}
+
+function isBcryptHash(value: string): boolean {
+  return /^\$2[aby]\$\d{2}\$/.test(value);
+}
+
+async function normalizeStoredRoomPassword(roomId: string, storedPassword: string | null): Promise<string | undefined> {
+  if (!storedPassword) return undefined;
+  if (isBcryptHash(storedPassword)) return storedPassword;
+
+  const passwordHash = await bcrypt.hash(storedPassword, 10);
+  RoomRepository.updatePasswordHash(roomId, passwordHash).catch(console.error);
+  return passwordHash;
+}
+
 function attachPersistenceCallbacks(room: GameRoom) {
   room.onGameStart = () => {
     RoomRepository.updateStatus(room.id, 'playing').catch(console.error);
@@ -71,13 +91,40 @@ function attachPersistenceCallbacks(room: GameRoom) {
   };
 }
 
+function syncRoomPlayerPersistence(roomId: string, socketId: string, room: GameRoom): void {
+  const playerData = socketToPlayer.get(socketId);
+  if (!playerData) return;
+
+  const playerInfo = room.getPlayerInfo(socketId);
+  if (!playerInfo) return;
+  RoomRepository.addPlayer(roomId, playerData.playerId, playerInfo.playerId, playerInfo.color, playerInfo.roles, playerInfo.isReady).catch(console.error);
+}
+
+function syncAllRoomParticipants(roomId: string, room: GameRoom): void {
+  for (const player of room.getRoomInfo().players) {
+    syncRoomPlayerPersistence(roomId, player.id, room);
+  }
+}
+
+function removeRoomPlayerPersistence(roomId: string, socketId: string): void {
+  const playerData = socketToPlayer.get(socketId);
+  if (playerData) {
+    RoomRepository.removePlayer(roomId, playerData.playerId).catch(console.error);
+  }
+}
+
 async function loadActiveRooms() {
   const activeRooms = await RoomRepository.getActiveRooms();
   for (const roomRecord of activeRooms) {
     if (roomRecord.status === 'playing') {
       const snapshot = await SnapshotRepository.getLatest(roomRecord.id);
       if (snapshot) {
-        const room = GameRoom.fromSnapshot(roomRecord.id, roomRecord.name, snapshot.state);
+        const passwordHash = await normalizeStoredRoomPassword(roomRecord.id, roomRecord.passwordHash);
+        const room = GameRoom.fromSnapshot(roomRecord.id, roomRecord.name, snapshot.state, {
+          isPrivate: roomRecord.isPrivate,
+          password: passwordHash,
+          maxPlayers: roomRecord.maxPlayers,
+        });
         attachPersistenceCallbacks(room);
         const dbPlayers = await RoomRepository.getPlayersInRoom(roomRecord.id);
         for (const p of dbPlayers) {
@@ -87,13 +134,19 @@ async function loadActiveRooms() {
             name: p.displayName,
             color: p.color,
             isReady: true,
+            roles: p.roles,
           });
         }
         rooms.set(roomRecord.id, room);
         console.log(`Loaded room "${roomRecord.name}" from snapshot at turn ${snapshot.turnNumber} with ${dbPlayers.length} disconnected player(s)`);
       }
     } else {
-      const room = new GameRoom(roomRecord.id, roomRecord.name);
+      const passwordHash = await normalizeStoredRoomPassword(roomRecord.id, roomRecord.passwordHash);
+      const room = new GameRoom(roomRecord.id, roomRecord.name, undefined, {
+        isPrivate: roomRecord.isPrivate,
+        password: passwordHash,
+        maxPlayers: roomRecord.maxPlayers,
+      });
       attachPersistenceCallbacks(room);
       rooms.set(roomRecord.id, room);
       console.log(`Loaded waiting room "${roomRecord.name}"`);
@@ -120,7 +173,11 @@ io.on('connection', (socket) => {
 
     const roomId = uuidv4();
     const settings = normalizeCreateRoomRequest(request, conn.playerName);
-    const room = new GameRoom(roomId, settings.name, undefined, settings);
+    const storedSettings = {
+      ...settings,
+      password: await hashRoomPassword(settings.password),
+    };
+    const room = new GameRoom(roomId, settings.name, undefined, storedSettings);
     rooms.set(roomId, room);
     attachPersistenceCallbacks(room);
 
@@ -129,11 +186,11 @@ io.on('connection', (socket) => {
     currentRoomId = roomId;
     socket.join(roomId);
 
-    RoomRepository.create(roomId, settings.name)
+    RoomRepository.create(roomId, storedSettings)
       .then(() => {
         const playerInfo = room.getPlayerInfo(socket.id);
-        if (playerData && playerInfo) {
-          RoomRepository.addPlayer(roomId, playerData.playerId, playerInfo.playerId, playerInfo.color).catch(console.error);
+        if (playerData && playerInfo && playerInfo.playerId !== null) {
+          RoomRepository.addPlayer(roomId, playerData.playerId, playerInfo.playerId, playerInfo.color, playerInfo.roles, playerInfo.isReady).catch(console.error);
         }
       })
       .catch(console.error);
@@ -184,7 +241,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      if (!room.canJoin(joinRequest.password)) {
+      if (!await room.canJoin(joinRequest.password)) {
         socket.emit('error', 'Incorrect room password');
         return;
       }
@@ -205,8 +262,8 @@ io.on('connection', (socket) => {
 
       if (playerData) {
         const playerInfo = room.getPlayerInfo(socket.id);
-        if (playerInfo) {
-          RoomRepository.addPlayer(roomId, playerData.playerId, playerInfo.playerId, playerInfo.color).catch(console.error);
+        if (playerInfo && playerInfo.playerId !== null) {
+          RoomRepository.addPlayer(roomId, playerData.playerId, playerInfo.playerId, playerInfo.color, playerInfo.roles, playerInfo.isReady).catch(console.error);
         }
       }
 
@@ -252,6 +309,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(currentRoomId);
     if (room && room.status === 'waiting') {
       room.setPlayerReady(socket.id, isReady);
+      syncRoomPlayerPersistence(currentRoomId, socket.id, room);
       io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
 
       if (room.areAllPlayersReady()) {
@@ -271,6 +329,7 @@ io.on('connection', (socket) => {
     if (room && room.status === 'waiting') {
       const colorChanged = room.setPlayerColor(socket.id, color);
       if (colorChanged) {
+        syncRoomPlayerPersistence(currentRoomId, socket.id, room);
         io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
         broadcastRoomsList();
       } else {
@@ -279,18 +338,115 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('updateRoomSettings', (settings: UpdateRoomSettingsRequest) => {
+  socket.on('updateRoomSettings', async (settings: UpdateRoomSettingsRequest) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (!room || room.status !== 'waiting') return;
+
+    if (!room.canManageRoom(socket.id)) {
+      socket.emit('error', 'Only hosts and admins can edit room settings');
+      return;
+    }
+
+    const storedSettings: UpdateRoomSettingsRequest = {
+      ...settings,
+    };
+    if (settings.password !== undefined) {
+      storedSettings.password = await hashRoomPassword(settings.password) ?? '';
+    }
+    room.updateSettings(storedSettings);
+    RoomRepository.updateSettings(currentRoomId, room.getSettings()).catch(console.error);
+    io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+    broadcastRoomsList();
+  });
+
+  socket.on('kickPlayer', (targetSocketId: string) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (!room || room.status !== 'waiting') return;
+
+    if (!room.canManageRoom(socket.id)) {
+      socket.emit('error', 'Only hosts and admins can kick players');
+      return;
+    }
+
+    const kicked = room.kickPlayer(targetSocketId);
+    if (!kicked) {
+      socket.emit('error', 'Unable to kick that player');
+      return;
+    }
+    removeRoomPlayerPersistence(currentRoomId, targetSocketId);
+
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    if (targetSocket) {
+      targetSocket.leave(currentRoomId);
+      targetSocket.emit('kicked', 'You were kicked from the room.');
+    }
+
+    io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+    broadcastRoomsList();
+  });
+
+  socket.on('updatePlayerRole', (request: RoleUpdateRequest) => {
     if (!currentRoomId) return;
 
     const room = rooms.get(currentRoomId);
     if (!room || room.status !== 'waiting') return;
 
     if (!room.isHost(socket.id)) {
-      socket.emit('error', 'Only the host can edit room settings');
+      socket.emit('error', 'Only hosts can promote or demote players');
       return;
     }
 
-    room.updateSettings(settings);
+    const updated = room.updateRole(request.targetSocketId, request.role, request.enabled);
+    if (!updated) {
+      socket.emit('error', 'Unable to update that role');
+      return;
+    }
+
+    syncRoomPlayerPersistence(currentRoomId, request.targetSocketId, room);
+    io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+    broadcastRoomsList();
+  });
+
+  socket.on('setParticipantRole', (role: RoomRole) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (!room || room.status !== 'waiting') return;
+    if (role !== 'player' && role !== 'spectator') return;
+
+    const updated = room.updateRole(socket.id, role, true);
+    if (!updated) {
+      socket.emit('error', role === 'player' ? 'No player slots are available' : 'Unable to switch role');
+      return;
+    }
+
+    syncRoomPlayerPersistence(currentRoomId, socket.id, room);
+    io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+    broadcastRoomsList();
+  });
+
+  socket.on('transferHost', (request: TransferHostRequest) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (!room || room.status !== 'waiting') return;
+
+    if (!room.isHost(socket.id)) {
+      socket.emit('error', 'Only hosts can transfer host');
+      return;
+    }
+
+    const transferred = room.transferHost(request.targetSocketId);
+    if (!transferred) {
+      socket.emit('error', 'Unable to transfer host');
+      return;
+    }
+
+    syncAllRoomParticipants(currentRoomId, room);
     io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
     broadcastRoomsList();
   });
@@ -298,7 +454,7 @@ io.on('connection', (socket) => {
   socket.on('regenerateMap', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (room && room.status === 'playing') {
+    if (room && room.status === 'playing' && room.canManageRoom(socket.id)) {
       room.regenerateMap();
       io.to(currentRoomId).emit('gameState', room.getState());
     }
@@ -335,6 +491,10 @@ io.on('connection', (socket) => {
     if (currentRoomId) {
       const room = rooms.get(currentRoomId);
       if (room) {
+        const wasWaiting = room.status === 'waiting';
+        if (wasWaiting) {
+          removeRoomPlayerPersistence(currentRoomId, socket.id);
+        }
         room.removePlayer(socket.id); // non-force: keeps in disconnectedPlayers during a game
         if (room.isEmpty() && !room.hasDisconnectedPlayers()) {
           rooms.delete(currentRoomId);

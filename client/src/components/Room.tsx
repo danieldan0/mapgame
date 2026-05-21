@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { RoomInfo, UpdateRoomSettingsRequest } from '../../../shared/src/types';
+import type { RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../../shared/src/types';
 import { RoomSettingsForm } from './RoomSettingsForm';
 
 interface RoomProps {
@@ -9,6 +9,10 @@ interface RoomProps {
   handleSetReady: (isReady: boolean) => void;
   handleSetColor: (color: number) => void;
   handleUpdateRoomSettings: (settings: UpdateRoomSettingsRequest) => void;
+  handleKickPlayer: (targetSocketId: string) => void;
+  handleUpdatePlayerRole: (request: RoleUpdateRequest) => void;
+  handleSetParticipantRole: (role: Extract<RoomRole, 'player' | 'spectator'>) => void;
+  handleTransferHost: (request: TransferHostRequest) => void;
 }
 
 const PLAYER_COLOR_OPTIONS = [
@@ -30,15 +34,23 @@ export const Room: React.FC<RoomProps> = ({
   handleLeaveRoom,
   handleSetReady,
   handleSetColor,
-  handleUpdateRoomSettings
+  handleUpdateRoomSettings,
+  handleKickPlayer,
+  handleUpdatePlayerRole,
+  handleSetParticipantRole,
+  handleTransferHost
 }) => {
   const me = currentRoom.players.find(p => p.id === socketId);
   const isReady = me?.isReady || false;
   const takenColors = new Set(currentRoom.players.filter(p => p.id !== socketId).map(p => p.color));
+  const playerCount = currentRoom.players.filter(p => p.roles.includes('player')).length;
   const inviteLink = `${window.location.origin}${window.location.pathname}?room=${currentRoom.id}`;
   const [customColor, setCustomColor] = useState(me ? colorToHex(me.color) : '#ff4500');
   const [isEditingSettings, setIsEditingSettings] = useState(false);
-  const isHost = me !== undefined && me.playerId === currentRoom.hostPlayerId;
+  const isHost = me?.roles.includes('host') ?? false;
+  const canManageRoom = isHost || (me?.roles.includes('admin') ?? false);
+  const isPlayer = me?.roles.includes('player') ?? false;
+  const hasOpenPlayerSlot = playerCount < currentRoom.maxPlayers;
 
   const handleCustomColorChange = (value: string) => {
     setCustomColor(value);
@@ -50,11 +62,27 @@ export const Room: React.FC<RoomProps> = ({
       <h1>Room: {currentRoom.name}</h1>
       <button onClick={handleLeaveRoom} style={{ marginBottom: '20px' }}>Leave Room</button>
 
+      {me && (
+        <div style={{ marginBottom: 20 }}>
+          <button
+            type="button"
+            onClick={() => handleSetParticipantRole(isPlayer ? 'spectator' : 'player')}
+            disabled={!isPlayer && !hasOpenPlayerSlot}
+            style={{ padding: '6px 12px' }}
+          >
+            {isPlayer ? 'Switch to Spectator' : 'Join as Player'}
+          </button>
+          {!isPlayer && !hasOpenPlayerSlot && (
+            <p style={{ marginTop: 6, color: '#666' }}>No player slots are available.</p>
+          )}
+        </div>
+      )}
+
       <div style={{ marginBottom: 20, display: 'grid', gap: 6 }}>
         <div>
           {currentRoom.isPrivate ? 'Private' : 'Public'} room
           {currentRoom.hasPassword && ' - Password protected'}
-          {' '}({currentRoom.players.length}/{currentRoom.maxPlayers} players)
+          {' '}({playerCount}/{currentRoom.maxPlayers} players)
         </div>
         <label>
           Invite link:
@@ -62,7 +90,7 @@ export const Room: React.FC<RoomProps> = ({
         </label>
       </div>
 
-      {isHost && (
+      {canManageRoom && (
         <div style={{ marginBottom: 20 }}>
           <button onClick={() => setIsEditingSettings(!isEditingSettings)} style={{ padding: '6px 12px' }}>
             {isEditingSettings ? 'Close Settings' : 'Edit Room Settings'}
@@ -102,12 +130,42 @@ export const Room: React.FC<RoomProps> = ({
                 border: '1px solid rgba(0,0,0,0.2)',
               }}
             />
-            {p.name} {p.id === socketId ? '(You)' : ''} - Player {p.playerId} - {p.isReady ? 'Ready' : 'Not Ready'}
+            {p.name} {p.id === socketId ? '(You)' : ''} - {formatRoles(p.roles)}
+            {p.playerId !== null && ` - Player ${p.playerId}`}
+            {p.roles.includes('player') && ` - ${p.isReady ? 'Ready' : 'Not Ready'}`}
+            {canManageRoom && p.id !== socketId && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, marginLeft: 20 }}>
+                <button onClick={() => handleKickPlayer(p.id)} style={{ padding: '3px 8px' }}>
+                  Kick
+                </button>
+                {isHost && (
+                  <>
+                    <button
+                      onClick={() => handleUpdatePlayerRole({ targetSocketId: p.id, role: 'admin', enabled: !p.roles.includes('admin') })}
+                      style={{ padding: '3px 8px' }}
+                    >
+                      {p.roles.includes('admin') ? 'Remove Admin' : 'Make Admin'}
+                    </button>
+                    <button
+                      onClick={() => handleUpdatePlayerRole({ targetSocketId: p.id, role: p.roles.includes('player') ? 'spectator' : 'player', enabled: true })}
+                      style={{ padding: '3px 8px' }}
+                    >
+                      {p.roles.includes('player') ? 'Make Spectator' : 'Make Player'}
+                    </button>
+                    {!p.roles.includes('host') && (
+                      <button onClick={() => handleTransferHost({ targetSocketId: p.id })} style={{ padding: '3px 8px' }}>
+                        Transfer Host
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </li>
         ))}
       </ul>
 
-      {me && (
+      {me && isPlayer && (
         <div style={{ marginTop: '20px' }}>
           <h2>Color</h2>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -151,6 +209,7 @@ export const Room: React.FC<RoomProps> = ({
       <div style={{ marginTop: '20px' }}>
         <button
           onClick={() => handleSetReady(!isReady)}
+          disabled={!me?.roles.includes('player')}
           style={{
             padding: '10px 20px',
             fontSize: '16px',
@@ -158,16 +217,20 @@ export const Room: React.FC<RoomProps> = ({
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer'
+            cursor: isPlayer ? 'pointer' : 'not-allowed'
           }}
         >
-          {isReady ? 'Unready' : 'Ready Up'}
+          {isPlayer ? (isReady ? 'Unready' : 'Ready Up') : 'Spectating'}
         </button>
       </div>
 
-      {currentRoom.players.length > 0 && !currentRoom.players.every(p => p.isReady) && (
+      {playerCount > 0 && !currentRoom.players.filter(p => p.roles.includes('player')).every(p => p.isReady) && (
         <p style={{ marginTop: '20px', color: '#666' }}>Waiting for all players to ready up...</p>
       )}
     </div>
   );
 };
+
+function formatRoles(roles: RoomRole[]): string {
+  return roles.map(role => role[0].toUpperCase() + role.slice(1)).join(', ');
+}

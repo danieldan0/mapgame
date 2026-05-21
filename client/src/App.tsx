@@ -5,7 +5,7 @@ import { GameView } from './components/GameView.tsx'
 import { Lobby } from './components/Lobby.tsx'
 import { Room } from './components/Room.tsx'
 import { useAuth } from './hooks/useAuth.ts'
-import type { CreateRoomRequest, GameAction, GameState, InviteRoomInfo, JoinRoomRequest, RoomInfo, UpdateRoomSettingsRequest } from '../../shared/src/types.ts'
+import type { CreateRoomRequest, GameAction, GameState, InviteRoomInfo, JoinRoomRequest, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../shared/src/types.ts'
 import './App.css'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL ?? `${window.location.protocol}//${window.location.hostname}:3000`;
@@ -154,6 +154,22 @@ function App() {
     socket.emit('updateRoomSettings', settings);
   };
 
+  const handleKickPlayer = (targetSocketId: string) => {
+    socket.emit('kickPlayer', targetSocketId);
+  };
+
+  const handleUpdatePlayerRole = (request: RoleUpdateRequest) => {
+    socket.emit('updatePlayerRole', request);
+  };
+
+  const handleSetParticipantRole = (role: Extract<RoomRole, 'player' | 'spectator'>) => {
+    socket.emit('setParticipantRole', role);
+  };
+
+  const handleTransferHost = (request: TransferHostRequest) => {
+    socket.emit('transferHost', request);
+  };
+
   const handleAction = (action: GameAction) => {
     socket.emit('action', action);
   };
@@ -203,6 +219,10 @@ function App() {
         handleSetReady={handleSetReady}
         handleSetColor={handleSetColor}
         handleUpdateRoomSettings={handleUpdateRoomSettings}
+        handleKickPlayer={handleKickPlayer}
+        handleUpdatePlayerRole={handleUpdatePlayerRole}
+        handleSetParticipantRole={handleSetParticipantRole}
+        handleTransferHost={handleTransferHost}
       />
     );
   }

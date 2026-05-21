@@ -48,12 +48,15 @@ export interface TurnState {
   defenseRolls: Record<string, DefenseRoll>;
 }
 
+export type RoomRole = 'host' | 'admin' | 'player' | 'spectator';
+
 export interface PlayerInfo {
   id: string; // Socket ID or generated ID
-  playerId: number;
+  playerId: number | null;
   name: string;
   color: number;
   isReady: boolean;
+  roles: RoomRole[];
   isDisconnected?: boolean;
 }
 
@@ -66,6 +69,16 @@ export interface RoomInfo {
   isPrivate: boolean;
   hasPassword: boolean;
   maxPlayers: number;
+}
+
+export interface RoleUpdateRequest {
+  targetSocketId: string;
+  role: RoomRole;
+  enabled: boolean;
+}
+
+export interface TransferHostRequest {
+  targetSocketId: string;
 }
 
 export interface RoomSettingsRequest {

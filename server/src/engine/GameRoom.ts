@@ -1,4 +1,5 @@
-import type { CreateRoomRequest, GameState, GameAction, Player, RoomInfo, PlayerInfo, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import bcrypt from 'bcryptjs';
+import type { CreateRoomRequest, GameState, GameAction, Player, RoomInfo, PlayerInfo, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
 import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startTurn } from './gameEngine';
@@ -9,7 +10,7 @@ export class GameRoom {
   public status: 'waiting' | 'playing' = 'waiting';
   public isPrivate: boolean;
   public maxPlayers: number;
-  private password: string | null;
+  private passwordHash: string | null;
   private hostPlayerId: number | null = null;
 
   // Fired when a game starts (room status changes to 'playing')
@@ -34,12 +35,12 @@ export class GameRoom {
     this.name = name;
     this.isPrivate = settings?.isPrivate ?? false;
     this.maxPlayers = clampMaxPlayers(settings?.maxPlayers);
-    this.password = settings?.password?.trim() || null;
+    this.passwordHash = settings?.password?.trim() || null;
     this.state = initialState ?? generateMap();
   }
 
-  static fromSnapshot(id: string, name: string, gameState: GameState): GameRoom {
-    const room = new GameRoom(id, name, gameState);
+  static fromSnapshot(id: string, name: string, gameState: GameState, settings?: Partial<CreateRoomRequest>): GameRoom {
+    const room = new GameRoom(id, name, gameState, settings);
     room.status = 'playing';
     return room;
   }
@@ -55,24 +56,38 @@ export class GameRoom {
       name: this.name,
       players: [...connected, ...disconnected],
       status: this.status,
-      hostPlayerId: this.hostPlayerId,
+      hostPlayerId: this.getHostPlayerId(),
       isPrivate: this.isPrivate,
-      hasPassword: this.password !== null,
+      hasPassword: this.passwordHash !== null,
       maxPlayers: this.maxPlayers,
     };
   }
 
-  public canJoin(password?: string): boolean {
-    return this.password === null || this.password === password;
+  public async canJoin(password?: string): Promise<boolean> {
+    if (this.passwordHash === null) return true;
+    if (!password) return false;
+    return bcrypt.compare(password, this.passwordHash);
+  }
+
+  public getSettings(): CreateRoomRequest {
+    return {
+      name: this.name,
+      isPrivate: this.isPrivate,
+      password: this.passwordHash ?? '',
+      maxPlayers: this.maxPlayers,
+    };
   }
 
   public hasOpenSeat(): boolean {
-    return this.players.size + this.disconnectedPlayers.size < this.maxPlayers;
+    return this.countRole('player') < this.maxPlayers;
   }
 
   public isHost(socketId: string): boolean {
-    const player = this.players.get(socketId);
-    return player !== undefined && player.playerId === this.hostPlayerId;
+    return this.hasRole(socketId, 'host');
+  }
+
+  public canManageRoom(socketId: string): boolean {
+    return this.hasRole(socketId, 'host') || this.hasRole(socketId, 'admin');
   }
 
   public updateSettings(settings: UpdateRoomSettingsRequest): void {
@@ -86,11 +101,11 @@ export class GameRoom {
     }
 
     if (settings.password !== undefined) {
-      this.password = settings.password.trim() || null;
+      this.passwordHash = settings.password.trim() || null;
     }
 
     if (settings.maxPlayers !== undefined) {
-      this.maxPlayers = Math.max(this.players.size + this.disconnectedPlayers.size, clampMaxPlayers(settings.maxPlayers));
+      this.maxPlayers = Math.max(this.countRole('player'), clampMaxPlayers(settings.maxPlayers));
     }
   }
 
@@ -125,7 +140,7 @@ export class GameRoom {
       // Restore their turn state
       const info = this.disconnectedTurnInfo.get(persistentId);
       this.disconnectedTurnInfo.delete(persistentId);
-      const turnState = this.state.turnState.playerTurns[playerInfo.playerId];
+      const turnState = playerInfo.playerId === null ? null : this.state.turnState.playerTurns[playerInfo.playerId];
       if (turnState) {
         turnState.hasActed = (info && info.turn === this.state.turn) ? info.hadActed : false;
       }
@@ -138,9 +153,10 @@ export class GameRoom {
       name,
       color: this.getDefaultColor(),
       isReady: false,
+      roles: this.players.size === 0 && this.disconnectedPlayers.size === 0 ? ['host', 'player'] : ['player'],
     };
     this.players.set(socketId, newPlayer);
-    if (this.hostPlayerId === null) {
+    if (this.hostPlayerId === null && newPlayer.playerId !== null) {
       this.hostPlayerId = newPlayer.playerId;
     }
     this.nextPlayerId++;
@@ -162,7 +178,7 @@ export class GameRoom {
       const persistentId = this.socketToPersistentId.get(socketId);
       if (persistentId) {
         this.disconnectedPlayers.set(persistentId, { ...player });
-        const turnState = this.state.turnState.playerTurns[player.playerId];
+        const turnState = player.playerId === null ? null : this.state.turnState.playerTurns[player.playerId];
         // Save whether they'd already acted this turn before forcing hasActed=true
         this.disconnectedTurnInfo.set(persistentId, {
           hadActed: turnState?.hasActed ?? false,
@@ -175,6 +191,7 @@ export class GameRoom {
     this.players.delete(socketId);
     if (this.status === 'waiting') {
       this.recalculateWaitingRoomPlayerSlots();
+      this.ensureHostExists();
     }
     const persistentId = this.socketToPersistentId.get(socketId);
     if (persistentId) {
@@ -201,7 +218,10 @@ export class GameRoom {
   }
 
   public markPlayerDisconnected(persistentId: string, playerInfo: PlayerInfo): void {
-    this.disconnectedPlayers.set(persistentId, { ...playerInfo });
+    this.disconnectedPlayers.set(persistentId, {
+      ...playerInfo,
+      roles: playerInfo.roles ?? ['player'],
+    });
   }
 
   public getPlayerInfo(socketId: string): PlayerInfo | null {
@@ -210,7 +230,7 @@ export class GameRoom {
 
   public setPlayerReady(socketId: string, isReady: boolean): void {
     const player = this.players.get(socketId);
-    if (player) {
+    if (player && player.roles.includes('player')) {
       player.isReady = isReady;
     }
   }
@@ -231,8 +251,9 @@ export class GameRoom {
   }
 
   public areAllPlayersReady(): boolean {
-    if (this.players.size === 0) return false;
-    for (const player of this.players.values()) {
+    const activePlayers = Array.from(this.players.values()).filter(player => player.roles.includes('player'));
+    if (activePlayers.length === 0) return false;
+    for (const player of activePlayers) {
       if (!player.isReady) return false;
     }
     return true;
@@ -276,11 +297,53 @@ export class GameRoom {
   }
 
   public getPlayerGameId(socketId: string): number | null {
-    return this.players.get(socketId)?.playerId ?? null;
+    const player = this.players.get(socketId);
+    if (!player?.roles.includes('player')) return null;
+    return player.playerId;
+  }
+
+  public kickPlayer(targetSocketId: string): boolean {
+    const target = this.players.get(targetSocketId);
+    if (!target) return false;
+    if (target.roles.includes('host') && this.countRole('host') <= 1) return false;
+
+    this.removePlayer(targetSocketId, true);
+    this.ensureHostExists();
+    return true;
+  }
+
+  public updateRole(targetSocketId: string, role: RoomRole, enabled: boolean): boolean {
+    const target = this.players.get(targetSocketId);
+    if (!target || role === 'host') return false;
+    if (role === 'player' && enabled && !target.roles.includes('player') && !this.hasOpenSeat()) return false;
+
+    if (enabled) {
+      this.addRole(target, role);
+    } else {
+      this.removeRole(target, role);
+    }
+
+    this.recalculateWaitingRoomPlayerSlots();
+    this.ensureHostExists();
+    return true;
+  }
+
+  public transferHost(targetSocketId: string): boolean {
+    const target = this.players.get(targetSocketId);
+    if (!target) return false;
+
+    for (const player of this.players.values()) {
+      player.roles = player.roles.filter(role => role !== 'host');
+    }
+
+    this.addRole(target, 'host');
+    this.hostPlayerId = target.playerId;
+    return true;
   }
 
   private skipDisconnectedPlayers(): void {
     for (const playerInfo of this.disconnectedPlayers.values()) {
+      if (!playerInfo.roles.includes('player') || playerInfo.playerId === null) continue;
       const turnState = this.state.turnState.playerTurns[playerInfo.playerId];
       if (turnState) turnState.hasActed = true;
     }
@@ -300,8 +363,9 @@ export class GameRoom {
   }
 
   private recalculateWaitingRoomPlayerSlots(): void {
-    const playersByOldSlot = Array.from(this.players.values()).sort((a, b) => a.playerId - b.playerId);
-    const oldHostPlayerId = this.hostPlayerId;
+    const playersByOldSlot = Array.from(this.players.values())
+      .filter(player => player.roles.includes('player'))
+      .sort((a, b) => (a.playerId ?? 9999) - (b.playerId ?? 9999));
     let nextPlayerId = 1;
 
     for (const player of playersByOldSlot) {
@@ -309,26 +373,93 @@ export class GameRoom {
       nextPlayerId++;
     }
 
-    if (playersByOldSlot.length === 0) {
-      this.hostPlayerId = null;
-    } else if (!playersByOldSlot.some(player => player.playerId === oldHostPlayerId)) {
-      this.hostPlayerId = playersByOldSlot[0].playerId;
+    for (const player of this.players.values()) {
+      if (!player.roles.includes('player')) {
+        player.playerId = null;
+        player.isReady = false;
+      }
     }
 
     this.nextPlayerId = nextPlayerId;
+    this.hostPlayerId = this.getHostPlayerId();
   }
 
   private getGamePlayers(): Record<number, Player> {
     return Object.fromEntries(
-      Array.from(this.players.values()).map(player => [
-        player.playerId,
+      Array.from(this.players.values())
+      .filter(player => player.roles.includes('player') && player.playerId !== null)
+      .map(player => [
+        player.playerId as number,
         {
-          id: player.playerId,
+          id: player.playerId as number,
           name: player.name,
           color: player.color,
         },
       ])
     );
+  }
+
+  private hasRole(socketId: string, role: RoomRole): boolean {
+    return this.players.get(socketId)?.roles.includes(role) ?? false;
+  }
+
+  private countRole(role: RoomRole): number {
+    return Array.from(this.players.values()).filter(player => player.roles.includes(role)).length;
+  }
+
+  private addRole(player: PlayerInfo, role: RoomRole): void {
+    if (!player.roles.includes(role)) {
+      player.roles.push(role);
+    }
+
+    if (role === 'player') {
+      player.roles = player.roles.filter(existingRole => existingRole !== 'spectator');
+      if (player.playerId === null) {
+        player.playerId = this.nextPlayerId;
+        this.nextPlayerId++;
+      }
+    }
+
+    if (role === 'spectator') {
+      player.roles = player.roles.filter(existingRole => existingRole !== 'player');
+      player.playerId = null;
+      player.isReady = false;
+    }
+  }
+
+  private removeRole(player: PlayerInfo, role: RoomRole): void {
+    if (role === 'player') {
+      if (!player.roles.includes('spectator')) {
+        player.roles.push('spectator');
+      }
+      player.playerId = null;
+      player.isReady = false;
+    }
+
+    if (role === 'spectator' && !player.roles.includes('player')) {
+      player.roles.push('player');
+    }
+
+    player.roles = player.roles.filter(existingRole => existingRole !== role);
+  }
+
+  private ensureHostExists(): void {
+    if (this.countRole('host') > 0) {
+      this.hostPlayerId = this.getHostPlayerId();
+      return;
+    }
+
+    const nextHost = Array.from(this.players.values())[0];
+    if (nextHost) {
+      this.addRole(nextHost, 'host');
+      this.hostPlayerId = nextHost.playerId;
+    } else {
+      this.hostPlayerId = null;
+    }
+  }
+
+  private getHostPlayerId(): number | null {
+    return Array.from(this.players.values()).find(player => player.roles.includes('host'))?.playerId ?? null;
   }
 }
 
