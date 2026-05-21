@@ -15,8 +15,28 @@ function App() {
   const [roomsList, setRoomsList] = useState<RoomInfo[]>([]);
   const [currentRoom, setCurrentRoom] = useState<RoomInfo | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [reconnectInfo, setReconnectInfo] = useState<{ roomId: string; roomName: string } | null>(null);
 
   useEffect(() => {
+    const doAuthenticate = () => {
+      const token = localStorage.getItem('mapgame_token') ?? undefined;
+      socket.emit('authenticate', token);
+    };
+
+    // Fires on initial connect and on every automatic reconnect
+    socket.on('connect', doAuthenticate);
+    // Already connected (e.g. strict-mode double-mount)
+    if (socket.connected) doAuthenticate();
+
+    socket.on('authenticated', ({ token, name }: { token: string; name: string }) => {
+      localStorage.setItem('mapgame_token', token);
+      localStorage.setItem('mapgame_player_name', name);
+    });
+
+    socket.on('reconnectAvailable', (info: { roomId: string; roomName: string }) => {
+      setReconnectInfo(info);
+    });
+
     socket.on('roomsList', (rooms: RoomInfo[]) => {
       setRoomsList(rooms);
     });
@@ -38,6 +58,9 @@ function App() {
     });
 
     return () => {
+      socket.off('connect', doAuthenticate);
+      socket.off('authenticated');
+      socket.off('reconnectAvailable');
       socket.off('roomsList');
       socket.off('roomUpdate');
       socket.off('gameStarted');
@@ -46,7 +69,15 @@ function App() {
     };
   }, []);
 
+  const handleReconnect = () => {
+    if (!reconnectInfo) return;
+    const roomId = reconnectInfo.roomId;
+    setReconnectInfo(null);
+    socket.emit('joinRoom', roomId);
+  };
+
   const handleCreateRoom = (playerName: string) => {
+    setReconnectInfo(null);
     const roomOwnerName = playerName.trim() || 'Player';
     socket.emit('setName', roomOwnerName);
     socket.emit('createRoom', `${roomOwnerName}'s Room`);
@@ -54,12 +85,11 @@ function App() {
   };
 
   const handleJoinRoom = (roomId: string, playerName: string) => {
+    setReconnectInfo(null);
     const trimmedName = playerName.trim();
-
     if (trimmedName) {
       socket.emit('setName', trimmedName);
     }
-
     socket.emit('joinRoom', roomId);
     setViewState('ROOM');
   };
@@ -97,6 +127,9 @@ function App() {
         roomsList={roomsList}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
+        reconnectInfo={reconnectInfo}
+        onReconnect={handleReconnect}
+        onDismissReconnect={() => setReconnectInfo(null)}
       />
     );
   }

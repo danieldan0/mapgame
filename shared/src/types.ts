@@ -54,6 +54,7 @@ export interface PlayerInfo {
   name: string;
   color: number;
   isReady: boolean;
+  isDisconnected?: boolean;
 }
 
 export interface RoomInfo {
