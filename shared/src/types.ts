@@ -62,10 +62,36 @@ export interface RoomInfo {
   name: string;
   players: PlayerInfo[];
   status: 'waiting' | 'playing';
+  hostPlayerId: number | null;
+  isPrivate: boolean;
+  hasPassword: boolean;
+  maxPlayers: number;
+}
+
+export interface RoomSettingsRequest {
+  name: string;
+  isPrivate: boolean;
+  password?: string;
+  maxPlayers: number;
+}
+
+export type CreateRoomRequest = RoomSettingsRequest;
+
+export type UpdateRoomSettingsRequest = Partial<RoomSettingsRequest>;
+
+export interface JoinRoomRequest {
+  roomId: string;
+  password?: string;
+}
+
+export interface InviteRoomInfo {
+  roomId: string;
+  roomName: string;
+  status: 'waiting' | 'playing';
+  hasPassword: boolean;
 }
 
 // Action Types for Client -> Server communication
 export type GameAction = 
   | { type: 'SUBMIT_PLAN'; actionType: PlannedActionType; targetTileIds: number[]; defenderId?: number }
   | { type: 'END_TURN' };
-

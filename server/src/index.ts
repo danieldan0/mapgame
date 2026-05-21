@@ -1,7 +1,7 @@
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import type { GameAction, RoomInfo } from '@mapgame/shared';
+import type { CreateRoomRequest, GameAction, InviteRoomInfo, JoinRoomRequest, RoomInfo, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { GameRoom } from './engine/GameRoom';
 import { v4 as uuidv4 } from 'uuid';
 import { runMigrations } from './db';
@@ -21,11 +21,45 @@ const rooms = new Map<string, GameRoom>();
 const socketToPlayer = new Map<string, { playerId: string; token: string; name: string }>();
 
 function getRoomsList(): RoomInfo[] {
-  return Array.from(rooms.values()).map(r => r.getRoomInfo());
+  return Array.from(rooms.values())
+    .filter(r => !r.isPrivate)
+    .map(r => r.getRoomInfo());
 }
 
 function broadcastRoomsList() {
   io.emit('roomsList', getRoomsList());
+}
+
+function normalizeCreateRoomRequest(request: string | CreateRoomRequest, playerName: string): CreateRoomRequest {
+  if (typeof request === 'string') {
+    return {
+      name: request || `${playerName}'s Room`,
+      isPrivate: false,
+    maxPlayers: 6,
+    };
+  }
+
+  return {
+    name: request.name?.trim() || `${playerName}'s Room`,
+    isPrivate: Boolean(request.isPrivate),
+    password: request.password?.trim() || undefined,
+    maxPlayers: clampMaxPlayers(request.maxPlayers),
+  };
+}
+
+function clampMaxPlayers(maxPlayers?: number): number {
+  return Math.max(2, Math.min(99, Number(maxPlayers) || 6));
+}
+
+function normalizeJoinRoomRequest(request: string | JoinRoomRequest): JoinRoomRequest {
+  if (typeof request === 'string') {
+    return { roomId: request };
+  }
+
+  return {
+    roomId: request.roomId,
+    password: request.password,
+  };
 }
 
 function attachPersistenceCallbacks(room: GameRoom) {
@@ -80,13 +114,13 @@ io.on('connection', (socket) => {
 
   attachAuthHandlers(socket, conn, socketToPlayer, rooms);
 
-  socket.on('createRoom', async (roomName: string) => {
+  socket.on('createRoom', async (request: string | CreateRoomRequest) => {
     if (currentRoomId) return;
     if (conn.authPromise) await conn.authPromise;
 
     const roomId = uuidv4();
-    const name = roomName || `${conn.playerName}'s Room`;
-    const room = new GameRoom(roomId, name);
+    const settings = normalizeCreateRoomRequest(request, conn.playerName);
+    const room = new GameRoom(roomId, settings.name, undefined, settings);
     rooms.set(roomId, room);
     attachPersistenceCallbacks(room);
 
@@ -95,7 +129,7 @@ io.on('connection', (socket) => {
     currentRoomId = roomId;
     socket.join(roomId);
 
-    RoomRepository.create(roomId, name)
+    RoomRepository.create(roomId, settings.name)
       .then(() => {
         const playerInfo = room.getPlayerInfo(socket.id);
         if (playerData && playerInfo) {
@@ -108,10 +142,28 @@ io.on('connection', (socket) => {
     broadcastRoomsList();
   });
 
-  socket.on('joinRoom', async (roomId: string) => {
+  socket.on('getInviteRoomInfo', (roomId: string) => {
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit('inviteRoomError', 'Room not found');
+      return;
+    }
+
+    const info: InviteRoomInfo = {
+      roomId: room.id,
+      roomName: room.name,
+      status: room.status,
+      hasPassword: room.getRoomInfo().hasPassword,
+    };
+    socket.emit('inviteRoomInfo', info);
+  });
+
+  socket.on('joinRoom', async (request: string | JoinRoomRequest) => {
     if (currentRoomId) return;
     if (conn.authPromise) await conn.authPromise;
 
+    const joinRequest = normalizeJoinRoomRequest(request);
+    const roomId = joinRequest.roomId;
     const room = rooms.get(roomId);
     const playerData = socketToPlayer.get(socket.id);
 
@@ -123,6 +175,20 @@ io.on('connection', (socket) => {
       room?.status === 'playing' &&
       playerData !== undefined &&
       room.hasDisconnectedPlayer(playerData.playerId);
+
+    const isReturningPlayer = isAlreadyInRoom || isReconnecting;
+
+    if (room && room.status === 'waiting' && !isReturningPlayer) {
+      if (!room.hasOpenSeat()) {
+        socket.emit('error', 'Room is full');
+        return;
+      }
+
+      if (!room.canJoin(joinRequest.password)) {
+        socket.emit('error', 'Incorrect room password');
+        return;
+      }
+    }
 
     if (room && (room.status === 'waiting' || isReconnecting || isAlreadyInRoom)) {
       const oldSocketId = room.addPlayer(socket.id, conn.playerName, playerData?.playerId);
@@ -211,6 +277,22 @@ io.on('connection', (socket) => {
         socket.emit('error', 'Color is unavailable');
       }
     }
+  });
+
+  socket.on('updateRoomSettings', (settings: UpdateRoomSettingsRequest) => {
+    if (!currentRoomId) return;
+
+    const room = rooms.get(currentRoomId);
+    if (!room || room.status !== 'waiting') return;
+
+    if (!room.isHost(socket.id)) {
+      socket.emit('error', 'Only the host can edit room settings');
+      return;
+    }
+
+    room.updateSettings(settings);
+    io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+    broadcastRoomsList();
   });
 
   socket.on('regenerateMap', () => {

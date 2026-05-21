@@ -1,5 +1,6 @@
-import React from 'react';
-import type { RoomInfo } from '../../../shared/src/types';
+import React, { useState } from 'react';
+import type { RoomInfo, UpdateRoomSettingsRequest } from '../../../shared/src/types';
+import { RoomSettingsForm } from './RoomSettingsForm';
 
 interface RoomProps {
   currentRoom: RoomInfo;
@@ -7,6 +8,7 @@ interface RoomProps {
   handleLeaveRoom: () => void;
   handleSetReady: (isReady: boolean) => void;
   handleSetColor: (color: number) => void;
+  handleUpdateRoomSettings: (settings: UpdateRoomSettingsRequest) => void;
 }
 
 const PLAYER_COLOR_OPTIONS = [
@@ -27,16 +29,62 @@ export const Room: React.FC<RoomProps> = ({
   socketId,
   handleLeaveRoom,
   handleSetReady,
-  handleSetColor
+  handleSetColor,
+  handleUpdateRoomSettings
 }) => {
   const me = currentRoom.players.find(p => p.id === socketId);
   const isReady = me?.isReady || false;
   const takenColors = new Set(currentRoom.players.filter(p => p.id !== socketId).map(p => p.color));
+  const inviteLink = `${window.location.origin}${window.location.pathname}?room=${currentRoom.id}`;
+  const [customColor, setCustomColor] = useState(me ? colorToHex(me.color) : '#ff4500');
+  const [isEditingSettings, setIsEditingSettings] = useState(false);
+  const isHost = me !== undefined && me.playerId === currentRoom.hostPlayerId;
+
+  const handleCustomColorChange = (value: string) => {
+    setCustomColor(value);
+    handleSetColor(Number.parseInt(value.slice(1), 16));
+  };
 
   return (
     <div className="room-container" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
       <h1>Room: {currentRoom.name}</h1>
       <button onClick={handleLeaveRoom} style={{ marginBottom: '20px' }}>Leave Room</button>
+
+      <div style={{ marginBottom: 20, display: 'grid', gap: 6 }}>
+        <div>
+          {currentRoom.isPrivate ? 'Private' : 'Public'} room
+          {currentRoom.hasPassword && ' - Password protected'}
+          {' '}({currentRoom.players.length}/{currentRoom.maxPlayers} players)
+        </div>
+        <label>
+          Invite link:
+          <input readOnly value={inviteLink} style={{ marginLeft: 8, padding: 5, width: '70%' }} />
+        </label>
+      </div>
+
+      {isHost && (
+        <div style={{ marginBottom: 20 }}>
+          <button onClick={() => setIsEditingSettings(!isEditingSettings)} style={{ padding: '6px 12px' }}>
+            {isEditingSettings ? 'Close Settings' : 'Edit Room Settings'}
+          </button>
+          {isEditingSettings && (
+            <div style={{ marginTop: 12, border: '1px solid #555', borderRadius: 6, padding: 12 }}>
+              <RoomSettingsForm
+                initialSettings={{
+                  name: currentRoom.name,
+                  isPrivate: currentRoom.isPrivate,
+                  maxPlayers: currentRoom.maxPlayers,
+                }}
+                submitLabel="Save Settings"
+                onSubmit={(settings) => {
+                  handleUpdateRoomSettings(settings);
+                  setIsEditingSettings(false);
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       <h2>Players</h2>
       <ul style={{ listStyleType: 'none', padding: 0 }}>
@@ -88,6 +136,15 @@ export const Room: React.FC<RoomProps> = ({
               );
             })}
           </div>
+          <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+            Custom:
+            <input
+              type="color"
+              value={customColor}
+              disabled={isReady}
+              onChange={(e) => handleCustomColorChange(e.target.value)}
+            />
+          </label>
         </div>
       )}
 

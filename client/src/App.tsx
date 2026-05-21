@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
+import { CreateRoom } from './components/CreateRoom.tsx'
 import { GameView } from './components/GameView.tsx'
 import { Lobby } from './components/Lobby.tsx'
 import { Room } from './components/Room.tsx'
 import { useAuth } from './hooks/useAuth.ts'
-import type { GameAction, GameState, RoomInfo } from '../../shared/src/types.ts'
+import type { CreateRoomRequest, GameAction, GameState, InviteRoomInfo, JoinRoomRequest, RoomInfo, UpdateRoomSettingsRequest } from '../../shared/src/types.ts'
 import './App.css'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL ?? `${window.location.protocol}//${window.location.hostname}:3000`;
 const socket = io(socketUrl);
 
-type ViewState = 'LOBBY' | 'ROOM' | 'GAME';
+type ViewState = 'LOBBY' | 'CREATE_ROOM' | 'ROOM' | 'GAME';
 
 function App() {
   const [viewState, setViewState] = useState<ViewState>('LOBBY');
@@ -18,6 +19,7 @@ function App() {
   const [currentRoom, setCurrentRoom] = useState<RoomInfo | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [reconnectInfo, setReconnectInfo] = useState<{ roomId: string; roomName: string } | null>(null);
+  const [inviteRoomId, setInviteRoomId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('room'));
 
   const { accountUsername, authError, login, register, logout, dismissAuthError } = useAuth(socket);
 
@@ -25,6 +27,10 @@ function App() {
     const doAuthenticate = () => {
       const token = localStorage.getItem('mapgame_token') ?? undefined;
       socket.emit('authenticate', token);
+      const roomId = new URLSearchParams(window.location.search).get('room');
+      if (roomId) {
+        socket.emit('getInviteRoomInfo', roomId);
+      }
     };
 
     socket.on('connect', doAuthenticate);
@@ -40,6 +46,9 @@ function App() {
 
     socket.on('roomUpdate', (room: RoomInfo) => {
       setCurrentRoom(room);
+      if (room.status === 'waiting') {
+        setViewState('ROOM');
+      }
     });
 
     socket.on('gameStarted', () => {
@@ -59,6 +68,27 @@ function App() {
       window.location.reload();
     });
 
+    socket.on('inviteRoomInfo', (info: InviteRoomInfo) => {
+      const playerName = localStorage.getItem('mapgame_player_name') || '';
+      const password = info.hasPassword ? window.prompt(`Password for ${info.roomName}`) ?? undefined : undefined;
+      if (info.hasPassword && !password) {
+        setInviteRoomId(null);
+        return;
+      }
+      if (playerName) {
+        socket.emit('setName', playerName);
+      }
+      socket.emit('joinRoom', { roomId: info.roomId, password });
+      setInviteRoomId(null);
+      window.history.replaceState({}, '', window.location.pathname);
+    });
+
+    socket.on('inviteRoomError', (msg: string) => {
+      alert(`Invite error: ${msg}`);
+      setInviteRoomId(null);
+      window.history.replaceState({}, '', window.location.pathname);
+    });
+
     return () => {
       socket.off('connect', doAuthenticate);
       socket.off('reconnectAvailable');
@@ -68,32 +98,41 @@ function App() {
       socket.off('gameState');
       socket.off('error');
       socket.off('kicked');
+      socket.off('inviteRoomInfo');
+      socket.off('inviteRoomError');
     };
   }, []);
+
+  useEffect(() => {
+    if (!inviteRoomId || !socket.connected) return;
+    socket.emit('getInviteRoomInfo', inviteRoomId);
+  }, [inviteRoomId]);
 
   const handleReconnect = () => {
     if (!reconnectInfo) return;
     const roomId = reconnectInfo.roomId;
     setReconnectInfo(null);
-    socket.emit('joinRoom', roomId);
+    socket.emit('joinRoom', { roomId });
   };
 
-  const handleCreateRoom = (playerName: string) => {
+  const handleCreateRoom = (settings: CreateRoomRequest, playerName: string) => {
     setReconnectInfo(null);
     const roomOwnerName = playerName.trim() || 'Player';
     socket.emit('setName', roomOwnerName);
-    socket.emit('createRoom', `${roomOwnerName}'s Room`);
-    setViewState('ROOM');
+    socket.emit('createRoom', {
+      ...settings,
+      name: settings.name.trim() || `${roomOwnerName}'s Room`,
+    });
   };
 
-  const handleJoinRoom = (roomId: string, playerName: string) => {
+  const handleJoinRoom = (request: JoinRoomRequest, playerName: string) => {
     setReconnectInfo(null);
     const trimmedName = playerName.trim();
     if (trimmedName) {
       socket.emit('setName', trimmedName);
     }
-    socket.emit('joinRoom', roomId);
-    setViewState('ROOM');
+    socket.emit('joinRoom', request);
+    setInviteRoomId(null);
   };
 
   const handleLeaveRoom = () => {
@@ -109,6 +148,10 @@ function App() {
 
   const handleSetColor = (color: number) => {
     socket.emit('setColor', color);
+  };
+
+  const handleUpdateRoomSettings = (settings: UpdateRoomSettingsRequest) => {
+    socket.emit('updateRoomSettings', settings);
   };
 
   const handleAction = (action: GameAction) => {
@@ -127,7 +170,7 @@ function App() {
     return (
       <Lobby
         roomsList={roomsList}
-        onCreateRoom={handleCreateRoom}
+        onOpenCreateRoom={() => setViewState('CREATE_ROOM')}
         onJoinRoom={handleJoinRoom}
         reconnectInfo={reconnectInfo}
         onReconnect={handleReconnect}
@@ -142,6 +185,15 @@ function App() {
     );
   }
 
+  if (viewState === 'CREATE_ROOM') {
+    return (
+      <CreateRoom
+        onCreateRoom={handleCreateRoom}
+        onCancel={() => setViewState('LOBBY')}
+      />
+    );
+  }
+
   if (viewState === 'ROOM' && currentRoom) {
     return (
       <Room
@@ -150,6 +202,7 @@ function App() {
         handleLeaveRoom={handleLeaveRoom}
         handleSetReady={handleSetReady}
         handleSetColor={handleSetColor}
+        handleUpdateRoomSettings={handleUpdateRoomSettings}
       />
     );
   }

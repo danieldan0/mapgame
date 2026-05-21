@@ -1,4 +1,4 @@
-import type { GameState, GameAction, Player, RoomInfo, PlayerInfo } from '@mapgame/shared';
+import type { CreateRoomRequest, GameState, GameAction, Player, RoomInfo, PlayerInfo, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
 import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startTurn } from './gameEngine';
@@ -7,6 +7,10 @@ export class GameRoom {
   public id: string;
   public name: string;
   public status: 'waiting' | 'playing' = 'waiting';
+  public isPrivate: boolean;
+  public maxPlayers: number;
+  private password: string | null;
+  private hostPlayerId: number | null = null;
 
   // Fired when a game starts (room status changes to 'playing')
   public onGameStart?: () => void;
@@ -25,9 +29,12 @@ export class GameRoom {
   private disconnectedTurnInfo: Map<string, { hadActed: boolean; turn: number }> = new Map();
   private nextPlayerId = 1;
 
-  constructor(id: string, name: string, initialState?: GameState) {
+  constructor(id: string, name: string, initialState?: GameState, settings?: Partial<CreateRoomRequest>) {
     this.id = id;
     this.name = name;
+    this.isPrivate = settings?.isPrivate ?? false;
+    this.maxPlayers = clampMaxPlayers(settings?.maxPlayers);
+    this.password = settings?.password?.trim() || null;
     this.state = initialState ?? generateMap();
   }
 
@@ -48,7 +55,43 @@ export class GameRoom {
       name: this.name,
       players: [...connected, ...disconnected],
       status: this.status,
+      hostPlayerId: this.hostPlayerId,
+      isPrivate: this.isPrivate,
+      hasPassword: this.password !== null,
+      maxPlayers: this.maxPlayers,
     };
+  }
+
+  public canJoin(password?: string): boolean {
+    return this.password === null || this.password === password;
+  }
+
+  public hasOpenSeat(): boolean {
+    return this.players.size + this.disconnectedPlayers.size < this.maxPlayers;
+  }
+
+  public isHost(socketId: string): boolean {
+    const player = this.players.get(socketId);
+    return player !== undefined && player.playerId === this.hostPlayerId;
+  }
+
+  public updateSettings(settings: UpdateRoomSettingsRequest): void {
+    if (settings.name !== undefined) {
+      const name = settings.name.trim();
+      if (name) this.name = name;
+    }
+
+    if (settings.isPrivate !== undefined) {
+      this.isPrivate = Boolean(settings.isPrivate);
+    }
+
+    if (settings.password !== undefined) {
+      this.password = settings.password.trim() || null;
+    }
+
+    if (settings.maxPlayers !== undefined) {
+      this.maxPlayers = Math.max(this.players.size + this.disconnectedPlayers.size, clampMaxPlayers(settings.maxPlayers));
+    }
   }
 
   public addPlayer(socketId: string, name: string, persistentId?: string): string | undefined {
@@ -97,6 +140,9 @@ export class GameRoom {
       isReady: false,
     };
     this.players.set(socketId, newPlayer);
+    if (this.hostPlayerId === null) {
+      this.hostPlayerId = newPlayer.playerId;
+    }
     this.nextPlayerId++;
 
     if (persistentId) {
@@ -127,6 +173,9 @@ export class GameRoom {
     }
 
     this.players.delete(socketId);
+    if (this.status === 'waiting') {
+      this.recalculateWaitingRoomPlayerSlots();
+    }
     const persistentId = this.socketToPersistentId.get(socketId);
     if (persistentId) {
       this.socketToPersistentId.delete(socketId);
@@ -169,7 +218,7 @@ export class GameRoom {
   public setPlayerColor(socketId: string, color: number): boolean {
     const player = this.players.get(socketId);
     if (!player || this.status !== 'waiting') return false;
-    if (!PLAYER_COLORS.includes(color)) return false;
+    if (!Number.isInteger(color) || color < 0x000000 || color > 0xFFFFFF) return false;
 
     const colorIsTaken = Array.from(this.players.values()).some(
       otherPlayer => otherPlayer.id !== socketId && otherPlayer.color === color
@@ -239,7 +288,34 @@ export class GameRoom {
 
   private getDefaultColor(): number {
     const takenColors = new Set(Array.from(this.players.values()).map(player => player.color));
-    return PLAYER_COLORS.find(color => !takenColors.has(color)) ?? PLAYER_COLORS[0];
+    const presetColor = PLAYER_COLORS.find(color => !takenColors.has(color));
+    if (presetColor !== undefined) return presetColor;
+
+    for (let offset = 0; offset < 99; offset++) {
+      const color = generatePlayerColor(this.nextPlayerId + offset);
+      if (!takenColors.has(color)) return color;
+    }
+
+    return generatePlayerColor(this.nextPlayerId);
+  }
+
+  private recalculateWaitingRoomPlayerSlots(): void {
+    const playersByOldSlot = Array.from(this.players.values()).sort((a, b) => a.playerId - b.playerId);
+    const oldHostPlayerId = this.hostPlayerId;
+    let nextPlayerId = 1;
+
+    for (const player of playersByOldSlot) {
+      player.playerId = nextPlayerId;
+      nextPlayerId++;
+    }
+
+    if (playersByOldSlot.length === 0) {
+      this.hostPlayerId = null;
+    } else if (!playersByOldSlot.some(player => player.playerId === oldHostPlayerId)) {
+      this.hostPlayerId = playersByOldSlot[0].playerId;
+    }
+
+    this.nextPlayerId = nextPlayerId;
   }
 
   private getGamePlayers(): Record<number, Player> {
@@ -254,4 +330,37 @@ export class GameRoom {
       ])
     );
   }
+}
+
+function clampMaxPlayers(maxPlayers?: number): number {
+  return Math.max(2, Math.min(99, Number(maxPlayers) || 6));
+}
+
+function generatePlayerColor(playerId: number): number {
+  const hue = (playerId * 137.508) % 360;
+  return hslToRgbNumber(hue, 68, 52);
+}
+
+function hslToRgbNumber(h: number, s: number, l: number): number {
+  const saturation = s / 100;
+  const lightness = l / 100;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = chroma * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = lightness - chroma / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (h < 60) [r, g, b] = [chroma, x, 0];
+  else if (h < 120) [r, g, b] = [x, chroma, 0];
+  else if (h < 180) [r, g, b] = [0, chroma, x];
+  else if (h < 240) [r, g, b] = [0, x, chroma];
+  else if (h < 300) [r, g, b] = [x, 0, chroma];
+  else [r, g, b] = [chroma, 0, x];
+
+  return (
+    (Math.round((r + m) * 255) << 16) |
+    (Math.round((g + m) * 255) << 8) |
+    Math.round((b + m) * 255)
+  );
 }

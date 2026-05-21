@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import type { RoomInfo } from '../../../shared/src/types';
+import type { JoinRoomRequest, RoomInfo } from '../../../shared/src/types';
 import { AccountPanel } from './AccountPanel';
 
 interface LobbyProps {
   roomsList: RoomInfo[];
-  onCreateRoom: (playerName: string) => void;
-  onJoinRoom: (roomId: string, playerName: string) => void;
+  onOpenCreateRoom: () => void;
+  onJoinRoom: (request: JoinRoomRequest, playerName: string) => void;
   reconnectInfo?: { roomId: string; roomName: string } | null;
   onReconnect?: () => void;
   onDismissReconnect?: () => void;
@@ -19,7 +19,7 @@ interface LobbyProps {
 
 export const Lobby: React.FC<LobbyProps> = ({
   roomsList,
-  onCreateRoom,
+  onOpenCreateRoom,
   onJoinRoom,
   reconnectInfo,
   onReconnect,
@@ -33,22 +33,18 @@ export const Lobby: React.FC<LobbyProps> = ({
 }) => {
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('mapgame_player_name') || '');
 
+  const handleJoinRoom = (room: RoomInfo) => {
+    const password = room.hasPassword ? window.prompt('Room password') ?? undefined : undefined;
+    if (room.hasPassword && !password) return;
+    onJoinRoom({ roomId: room.id, password }, playerName);
+  };
+
   return (
     <div className="lobby-container" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
       <h1>Game Lobby</h1>
 
       {reconnectInfo && (
-        <div style={{
-          background: '#1a2e1a',
-          border: '1px solid #3a6b3a',
-          borderRadius: '6px',
-          padding: '12px 16px',
-          marginBottom: '20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-        }}>
+        <div style={{ background: '#1a2e1a', border: '1px solid #3a6b3a', borderRadius: '6px', padding: '12px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
           <span>Active game: <strong>{reconnectInfo.roomName}</strong></span>
           <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
             <button onClick={onReconnect} style={{ padding: '6px 14px', background: '#2d7a2d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
@@ -86,7 +82,7 @@ export const Lobby: React.FC<LobbyProps> = ({
       </div>
 
       <div style={{ marginBottom: '20px' }}>
-        <button onClick={() => onCreateRoom(playerName)} style={{ padding: '10px 20px', fontSize: '16px' }}>
+        <button onClick={onOpenCreateRoom} style={{ padding: '10px 20px', fontSize: '16px' }}>
           Create New Room
         </button>
       </div>
@@ -99,11 +95,12 @@ export const Lobby: React.FC<LobbyProps> = ({
           {roomsList.map(room => (
             <li key={room.id} style={{ border: '1px solid #ccc', padding: '10px', marginBottom: '10px', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <strong>{room.name}</strong> — {room.status} ({room.players.length} players)
+                <strong>{room.name}</strong> - {room.status} ({room.players.length}/{room.maxPlayers} players)
+                {room.hasPassword && <span> - Password</span>}
               </div>
               <button
-                onClick={() => onJoinRoom(room.id, playerName)}
-                disabled={room.status !== 'waiting'}
+                onClick={() => handleJoinRoom(room)}
+                disabled={room.status !== 'waiting' || room.players.length >= room.maxPlayers}
                 style={{ padding: '5px 10px' }}
               >
                 Join
