@@ -1,4 +1,4 @@
-import type { GameAction, GameState, PlannedActionType, Tile } from '@mapgame/shared';
+import type { GameAction, GameState, Tile } from '@mapgame/shared';
 
 interface ActionResult {
   actionAccepted: boolean;
@@ -8,6 +8,19 @@ interface ActionResult {
 const CLAIM_COST = 1;
 const SEA_TRAVEL_COST = 3;
 const MAX_ENCIRCLED_REGION_SIZE = 5;
+
+export function startPlacementPhase(gameState: GameState): void {
+  gameState.phase = 'placement';
+  gameState.turnState = {
+    playerTurns: Object.fromEntries(
+      Object.keys(gameState.players).map(playerId => [
+        Number(playerId),
+        { roll: 0, power: 0, dieSize: 0, hasActed: false },
+      ])
+    ),
+    defenseRolls: {},
+  };
+}
 
 export function startTurn(gameState: GameState): void {
   gameState.turnState = {
@@ -30,9 +43,41 @@ export function handleAction(gameState: GameState, action: GameAction, actingPla
     return { actionAccepted: false, stateChanged: false };
   }
 
+  if (gameState.phase === 'placement') {
+    if (action.type === 'PLACE_START') {
+      const tile = gameState.tiles[action.tileId];
+      if (!tile || tile.typeId === 'sea') {
+        return { actionAccepted: false, stateChanged: false };
+      }
+      if (tile.ownerId !== null && tile.ownerId !== actingPlayerId) {
+        return { actionAccepted: false, stateChanged: false };
+      }
+      // Unset player's previous tile
+      for (const t of Object.values(gameState.tiles)) {
+        if (t.ownerId === actingPlayerId) { t.ownerId = null; break; }
+      }
+      tile.ownerId = actingPlayerId;
+      // hasActed stays false - player must CONFIRM_PLACEMENT to lock in
+      return { actionAccepted: true, stateChanged: true };
+    }
+
+    if (action.type === 'CONFIRM_PLACEMENT') {
+      const hasPlaced = Object.values(gameState.tiles).some(t => t.ownerId === actingPlayerId);
+      if (!hasPlaced) return { actionAccepted: false, stateChanged: false };
+      playerTurn.hasActed = true;
+      return { actionAccepted: true, stateChanged: true };
+    }
+
+    return { actionAccepted: false, stateChanged: false };
+  }
+
   if (action.type === 'END_TURN') {
     playerTurn.hasActed = true;
     return { actionAccepted: true, stateChanged: true };
+  }
+
+  if (action.type !== 'SUBMIT_PLAN') {
+    return { actionAccepted: false, stateChanged: false };
   }
 
   const targetTileIds = uniqueIds(action.targetTileIds);
@@ -66,6 +111,7 @@ export function skipPlayersWithNoTiles(gameState: GameState): boolean {
 }
 
 export function previewAttack(gameState: GameState, attackerId: number, defenderId: number): boolean {
+  if (gameState.phase === 'placement') return false;
   const playerTurn = gameState.turnState.playerTurns[attackerId];
   if (!playerTurn || playerTurn.hasActed || !gameState.players[defenderId] || attackerId === defenderId) {
     return false;

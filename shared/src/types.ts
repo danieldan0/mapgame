@@ -22,6 +22,7 @@ export interface GameState {
   tiles: Record<number, Tile>;
   players: Record<number, Player>;
   turn: number;
+  phase: 'placement' | 'playing';
   turnState: TurnState;
   tileTypes: Record<string, TileType>;
 }
@@ -105,6 +106,8 @@ export interface InviteRoomInfo {
 }
 
 // Action Types for Client -> Server communication
-export type GameAction = 
+export type GameAction =
   | { type: 'SUBMIT_PLAN'; actionType: PlannedActionType; targetTileIds: number[]; defenderId?: number }
-  | { type: 'END_TURN' };
+  | { type: 'END_TURN' }
+  | { type: 'PLACE_START'; tileId: number }
+  | { type: 'CONFIRM_PLACEMENT' };

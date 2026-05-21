@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import type { CreateRoomRequest, GameState, GameAction, Player, RoomInfo, PlayerInfo, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
-import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startTurn } from './gameEngine';
+import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startPlacementPhase, startTurn } from './gameEngine';
 
 export class GameRoom {
   public id: string;
@@ -40,7 +40,8 @@ export class GameRoom {
   }
 
   static fromSnapshot(id: string, name: string, gameState: GameState, settings?: Partial<CreateRoomRequest>): GameRoom {
-    const room = new GameRoom(id, name, gameState, settings);
+    const phase = (gameState as { phase?: 'placement' | 'playing' }).phase ?? 'playing';
+    const room = new GameRoom(id, name, { ...gameState, phase }, settings);
     room.status = 'playing';
     return room;
   }
@@ -262,10 +263,9 @@ export class GameRoom {
   public startGame(): void {
     this.status = 'playing';
     this.state = generateMap(this.getGamePlayers());
-    startTurn(this.state);
+    startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
     this.onGameStart?.();
-    this.onTurnEnd?.(this.state); // save initial snapshot
   }
 
   public getState(): GameState {
@@ -274,12 +274,23 @@ export class GameRoom {
 
   public regenerateMap(): void {
     this.state = generateMap(this.getGamePlayers());
-    startTurn(this.state);
+    startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
   }
 
   public handleAction(action: GameAction, playerId: number): boolean {
     const result = handleAction(this.state, action, playerId);
+
+    if (this.state.phase === 'placement') {
+      if (result.actionAccepted && haveAllPlayersActed(this.state)) {
+        this.state.phase = 'playing';
+        startTurn(this.state);
+        this.skipDisconnectedPlayers();
+        this.onTurnEnd?.(this.state);
+      }
+      return result.stateChanged;
+    }
+
     const skippedPlayersChanged = skipPlayersWithNoTiles(this.state);
 
     if (result.actionAccepted && haveAllPlayersActed(this.state)) {

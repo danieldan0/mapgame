@@ -99,20 +99,11 @@ export function generateMap(players: Record<number, Player> = DEFAULT_PLAYERS): 
     }
   }
 
-  // 5. Assign each player a starting land/city tile that isn't already claimed.
-  for (const playerId of Object.keys(players).map(Number)) {
-    const available = Object.values(tiles).filter(
-      t => t.ownerId === null && t.typeId !== 'sea',
-    );
-    if (available.length > 0) {
-      available[Math.floor(Math.random() * available.length)].ownerId = playerId;
-    }
-  }
-
   return {
     tiles,
     players: { ...players },
     turn: 1,
+    phase: 'placement',
     turnState: { playerTurns: {}, defenseRolls: {} },
     tileTypes: { ...DEFAULT_TILE_TYPES },
   };

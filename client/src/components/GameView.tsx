@@ -43,6 +43,12 @@ export const GameView: React.FC<GameViewProps> = ({
   const localTurn = localPlayerId === null ? null : gameState?.turnState.playerTurns[localPlayerId] ?? null;
   const enemyPlayers = Object.values(gameState?.players ?? {}).filter(player => player.id !== localPlayerId);
   const hasOwnedTiles = localPlayerId !== null && Object.values(gameState?.tiles ?? {}).some(tile => tile.ownerId === localPlayerId);
+  const isPlacementPhase = gameState?.phase === 'placement';
+  const hasConfirmed = isPlacementPhase && (localTurn?.hasActed ?? false);
+  const canManageRoom = currentRoom?.players.find(p => p.playerId === localPlayerId)?.roles.some(r => r === 'host' || r === 'admin') ?? false;
+  const myPlacedTileId = isPlacementPhase && localPlayerId !== null
+    ? (Object.values(gameState?.tiles ?? {}).find(t => t.ownerId === localPlayerId)?.id ?? null)
+    : null;
 
   const selectedDefenderId = useMemo(() => {
     if (lockedDefenderId !== null) return lockedDefenderId;
@@ -77,7 +83,18 @@ export const GameView: React.FC<GameViewProps> = ({
   }, [actionType, gameState, localPlayerId, selectedDefenderId, selectedTileIds]);
 
   const claimableTileIds = useMemo(() => {
-    if (!gameState || localPlayerId === null || localTurn?.hasActed || selectedPlanCost >= claimBudget) {
+    if (!gameState || localPlayerId === null) return new Set<number>();
+
+    if (isPlacementPhase) {
+      if (hasConfirmed) return new Set<number>();
+      return new Set(
+        Object.values(gameState.tiles)
+          .filter(tile => tile.typeId !== 'sea' && tile.ownerId === null)
+          .map(tile => tile.id)
+      );
+    }
+
+    if (localTurn?.hasActed || selectedPlanCost >= claimBudget) {
       return new Set<number>();
     }
 
@@ -89,7 +106,7 @@ export const GameView: React.FC<GameViewProps> = ({
       selectedDefenderId,
       remainingBudget: claimBudget - selectedPlanCost,
     });
-  }, [actionType, claimBudget, gameState, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedPlanCost, selectedTileIds]);
+  }, [actionType, claimBudget, gameState, hasConfirmed, isPlacementPhase, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedPlanCost, selectedTileIds]);
 
   const selectedTileIdSet = useMemo(() => new Set(selectedTileIds), [selectedTileIds]);
   const isCanceledAttack =
@@ -138,7 +155,15 @@ export const GameView: React.FC<GameViewProps> = ({
   }, [actionType, gameState, localPlayerId, localTurn?.hasActed, selectedDefenderId, selectedTileIds]);
 
   const handlePolygonClick = (targetId: number) => {
-    if (!gameState || localPlayerId === null || localTurn?.hasActed) return;
+    if (!gameState || localPlayerId === null) return;
+
+    if (isPlacementPhase) {
+      if (hasConfirmed || !claimableTileIds.has(targetId)) return;
+      onAction({ type: 'PLACE_START', tileId: targetId });
+      return;
+    }
+
+    if (localTurn?.hasActed) return;
 
     if (selectedTileIdSet.has(targetId)) {
       if (lockedDefenderId === null) {
@@ -224,66 +249,94 @@ export const GameView: React.FC<GameViewProps> = ({
         <div><b>Map Game</b></div>
         {currentRoom && <div style={{ fontSize: '12px', color: '#666' }}>Room: {currentRoom.name}</div>}
         <div style={{ marginTop: '5px' }}>
-          Turn {gameState?.turn ?? '-'} | Player: {localPlayer?.name ?? 'Joining...'}
+          Player: {localPlayer?.name ?? 'Joining...'}
           {enemyPlayers.length > 0 && ` | Opponents: ${enemyPlayers.map(player => player.name).join(', ')}`}
         </div>
-        <div style={{ marginTop: '8px' }}>
-          Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Points: {selectedPlanCost}/{claimBudget}
-          {localTurn?.hasActed && ' | Action submitted'}
-          {!hasOwnedTiles && ' | No tiles left'}
-        </div>
-        {actionType === 'ATTACK' && selectedDefenderId !== null && (
-          <div style={{ marginTop: '6px' }}>
-            Attack {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} - Defense {getDefenseRollLabel(gameState, localPlayerId, selectedDefenderId)} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}
-          </div>
+        {isPlacementPhase ? (
+          <>
+            <div style={{ marginTop: '10px' }}>
+              {hasConfirmed
+                ? 'Waiting for other players to confirm their starting tile.'
+                : myPlacedTileId !== null
+                  ? 'Click a different tile to move, or confirm your position.'
+                  : 'Click a highlighted tile to choose your starting position.'}
+            </div>
+            <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => !hasConfirmed && myPlacedTileId !== null && onAction({ type: 'CONFIRM_PLACEMENT' })}
+                disabled={myPlacedTileId === null || hasConfirmed}
+                style={{ padding: '5px 10px', cursor: myPlacedTileId !== null && !hasConfirmed ? 'pointer' : 'not-allowed' }}
+              >
+                Confirm Position
+              </button>
+              <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
+                Leave Match
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ marginTop: '8px' }}>
+              Turn {gameState?.turn ?? '-'} | Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Points: {selectedPlanCost}/{claimBudget}
+              {localTurn?.hasActed && ' | Action submitted'}
+              {!hasOwnedTiles && ' | No tiles left'}
+            </div>
+            {actionType === 'ATTACK' && selectedDefenderId !== null && (
+              <div style={{ marginTop: '6px' }}>
+                Attack {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} - Defense {getDefenseRollLabel(gameState, localPlayerId, selectedDefenderId)} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}
+              </div>
+            )}
+            {planNotice && (
+              <div style={{ marginTop: '8px', color: '#b45309' }}>
+                {planNotice}
+              </div>
+            )}
+            <div style={{ marginTop: '10px', display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => handleActionTypeChange('EXPAND')}
+                disabled={localTurn?.hasActed || lockedDefenderId !== null}
+                style={{ padding: '5px 10px', cursor: localTurn?.hasActed || lockedDefenderId !== null ? 'not-allowed' : 'pointer', fontWeight: actionType === 'EXPAND' ? 700 : 400 }}
+              >
+                Expand
+              </button>
+              <button
+                onClick={() => handleActionTypeChange('ATTACK')}
+                disabled={localTurn?.hasActed || lockedDefenderId !== null}
+                style={{ padding: '5px 10px', cursor: localTurn?.hasActed || lockedDefenderId !== null ? 'not-allowed' : 'pointer', fontWeight: actionType === 'ATTACK' ? 700 : 400 }}
+              >
+                Attack
+              </button>
+            </div>
+            <div style={{ marginTop: '10px' }}>
+              {localTurn?.hasActed
+                ? 'Waiting for other players to act.'
+                : selectedTileIds.length > 0
+                  ? lockedDefenderId === null ? 'Highlighted tiles can be added to this plan.' : 'Attack locked. Highlighted tiles can be added if the attack result allows it.'
+                  : `Select highlighted tiles to ${actionType.toLowerCase()}.`}
+            </div>
+            <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button onClick={handleSubmitPlan} disabled={!canSubmitPlan} style={{ padding: '5px 10px', cursor: canSubmitPlan ? 'pointer' : 'not-allowed' }}>
+                Submit Plan
+              </button>
+              <button onClick={handleSkipTurn} disabled={localTurn?.hasActed} style={{ padding: '5px 10px', cursor: localTurn?.hasActed ? 'not-allowed' : 'pointer' }}>
+                Skip Turn
+              </button>
+              {canManageRoom && (
+                <button onClick={handleRegenerate} style={{ padding: '5px 10px', cursor: 'pointer' }}>
+                  Regenerate Map
+                </button>
+              )}
+              <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
+                Leave Match
+              </button>
+            </div>
+          </>
         )}
-        {planNotice && (
-          <div style={{ marginTop: '8px', color: '#b45309' }}>
-            {planNotice}
-          </div>
-        )}
-        <div style={{ marginTop: '10px', display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => handleActionTypeChange('EXPAND')}
-            disabled={localTurn?.hasActed || lockedDefenderId !== null}
-            style={{ padding: '5px 10px', cursor: localTurn?.hasActed || lockedDefenderId !== null ? 'not-allowed' : 'pointer', fontWeight: actionType === 'EXPAND' ? 700 : 400 }}
-          >
-            Expand
-          </button>
-          <button
-            onClick={() => handleActionTypeChange('ATTACK')}
-            disabled={localTurn?.hasActed || lockedDefenderId !== null}
-            style={{ padding: '5px 10px', cursor: localTurn?.hasActed || lockedDefenderId !== null ? 'not-allowed' : 'pointer', fontWeight: actionType === 'ATTACK' ? 700 : 400 }}
-          >
-            Attack
-          </button>
-        </div>
-        <div style={{ marginTop: '10px' }}>
-          {localTurn?.hasActed
-            ? 'Waiting for other players to act.'
-            : selectedTileIds.length > 0
-              ? lockedDefenderId === null ? 'Highlighted tiles can be added to this plan.' : 'Attack locked. Highlighted tiles can be added if the attack result allows it.'
-              : `Select highlighted tiles to ${actionType.toLowerCase()}.`}
-        </div>
-        <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button onClick={handleSubmitPlan} disabled={!canSubmitPlan} style={{ padding: '5px 10px', cursor: canSubmitPlan ? 'pointer' : 'not-allowed' }}>
-            Submit Plan
-          </button>
-          <button onClick={handleSkipTurn} disabled={localTurn?.hasActed} style={{ padding: '5px 10px', cursor: localTurn?.hasActed ? 'not-allowed' : 'pointer' }}>
-            Skip Turn
-          </button>
-          <button onClick={handleRegenerate} style={{ padding: '5px 10px', cursor: 'pointer' }}>
-            Regenerate Map
-          </button>
-          <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
-            Leave Match
-          </button>
-        </div>
       </div>
       <Map
         gameState={gameState}
         claimableTileIds={claimableTileIds}
-        selectedTileIds={selectedTileIdSet}
+        selectedTileIds={isPlacementPhase && myPlacedTileId !== null ? new Set([myPlacedTileId]) : selectedTileIdSet}
         onPolygonClick={handlePolygonClick}
       />
     </div>
