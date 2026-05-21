@@ -3,10 +3,12 @@ import { io } from 'socket.io-client'
 import { GameView } from './components/GameView.tsx'
 import { Lobby } from './components/Lobby.tsx'
 import { Room } from './components/Room.tsx'
+import { useAuth } from './hooks/useAuth.ts'
 import type { GameAction, GameState, RoomInfo } from '../../shared/src/types.ts'
 import './App.css'
 
-const socket = io('http://localhost:3000');
+const socketUrl = import.meta.env.VITE_SOCKET_URL ?? `${window.location.protocol}//${window.location.hostname}:3000`;
+const socket = io(socketUrl);
 
 type ViewState = 'LOBBY' | 'ROOM' | 'GAME';
 
@@ -17,21 +19,16 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [reconnectInfo, setReconnectInfo] = useState<{ roomId: string; roomName: string } | null>(null);
 
+  const { accountUsername, authError, login, register, logout, dismissAuthError } = useAuth(socket);
+
   useEffect(() => {
     const doAuthenticate = () => {
       const token = localStorage.getItem('mapgame_token') ?? undefined;
       socket.emit('authenticate', token);
     };
 
-    // Fires on initial connect and on every automatic reconnect
     socket.on('connect', doAuthenticate);
-    // Already connected (e.g. strict-mode double-mount)
     if (socket.connected) doAuthenticate();
-
-    socket.on('authenticated', ({ token, name }: { token: string; name: string }) => {
-      localStorage.setItem('mapgame_token', token);
-      localStorage.setItem('mapgame_player_name', name);
-    });
 
     socket.on('reconnectAvailable', (info: { roomId: string; roomName: string }) => {
       setReconnectInfo(info);
@@ -57,15 +54,20 @@ function App() {
       alert(`Error: ${msg}`);
     });
 
+    socket.on('kicked', (msg: string) => {
+      alert(`Disconnected: ${msg}`);
+      window.location.reload();
+    });
+
     return () => {
       socket.off('connect', doAuthenticate);
-      socket.off('authenticated');
       socket.off('reconnectAvailable');
       socket.off('roomsList');
       socket.off('roomUpdate');
       socket.off('gameStarted');
       socket.off('gameState');
       socket.off('error');
+      socket.off('kicked');
     };
   }, []);
 
@@ -130,6 +132,12 @@ function App() {
         reconnectInfo={reconnectInfo}
         onReconnect={handleReconnect}
         onDismissReconnect={() => setReconnectInfo(null)}
+        accountUsername={accountUsername}
+        authError={authError}
+        onLogin={login}
+        onRegister={register}
+        onLogout={logout}
+        onDismissAuthError={dismissAuthError}
       />
     );
   }

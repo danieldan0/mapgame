@@ -4,6 +4,8 @@ export const players = pgTable('players', {
   id: uuid('id').primaryKey().defaultRandom(),
   token: uuid('token').notNull().unique().defaultRandom(),
   displayName: text('display_name').notNull(),
+  username: text('username').unique(),
+  passwordHash: text('password_hash'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
 });

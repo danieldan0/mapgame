@@ -5,9 +5,9 @@ import type { GameAction, RoomInfo } from '@mapgame/shared';
 import { GameRoom } from './engine/GameRoom';
 import { v4 as uuidv4 } from 'uuid';
 import { runMigrations } from './db';
-import { PlayerRepository } from './repositories/PlayerRepository';
 import { RoomRepository } from './repositories/RoomRepository';
 import { SnapshotRepository } from './repositories/SnapshotRepository';
+import { attachAuthHandlers, type ConnectionState } from './handlers/authHandlers';
 
 const app = express();
 const server = http.createServer(app);
@@ -70,90 +70,28 @@ async function loadActiveRooms() {
 io.on('connection', (socket) => {
   console.log(`user connected: ${socket.id}`);
 
+  const conn: ConnectionState = {
+    playerName: `Player_${socket.id.substring(0, 4)}`,
+    authPromise: null,
+  };
   let currentRoomId: string | null = null;
-  let playerName = `Player_${socket.id.substring(0, 4)}`;
-
-  // Resolved once authenticate completes. createRoom/joinRoom await this so
-  // socketToPlayer is always populated before a room action is processed -
-  // even if the DB query in authenticate hasn't finished yet.
-  let authPromise: Promise<void> | null = null;
 
   socket.emit('roomsList', getRoomsList());
 
-  // Persistent identity. Client sends stored token (if any); server returns token to store.
-  socket.on('authenticate', (token?: string) => {
-    authPromise = (async () => {
-      let player = token ? await PlayerRepository.findByToken(token) : null;
-      if (!player) {
-        player = await PlayerRepository.create(playerName);
-      } else {
-        PlayerRepository.updateLastSeen(player.id).catch(console.error);
-        playerName = player.displayName;
-      }
-
-      socketToPlayer.set(socket.id, {
-        playerId: player.id,
-        token: player.token,
-        name: player.displayName,
-      });
-
-      socket.emit('authenticated', {
-        token: player.token,
-        name: player.displayName,
-        playerId: player.id,
-      });
-
-      // Check DB first for a reconnectable room
-      const activeRoom = await RoomRepository.findActiveRoomForPlayer(player.id);
-      let reconnectRoom: { id: string; name: string } | null = null;
-
-      if (activeRoom?.status === 'playing') {
-        const room = rooms.get(activeRoom.id);
-        if (room?.hasDisconnectedPlayer(player.id)) {
-          reconnectRoom = { id: activeRoom.id, name: activeRoom.name };
-        }
-      }
-
-      // In-memory fallback: DB write may have been missed (wrong port, timing, etc.)
-      if (!reconnectRoom) {
-        for (const [roomId, room] of rooms) {
-          if (room.status === 'playing' && room.hasDisconnectedPlayer(player.id)) {
-            reconnectRoom = { id: roomId, name: room.name };
-            break;
-          }
-        }
-      }
-
-      if (reconnectRoom) {
-        socket.emit('reconnectAvailable', { roomId: reconnectRoom.id, roomName: reconnectRoom.name });
-      }
-    })().catch((err) => {
-      console.error('authenticate error:', err);
-      socket.emit('error', 'Authentication failed');
-    });
-  });
-
-  socket.on('setName', async (name: string) => {
-    playerName = name;
-    const playerData = socketToPlayer.get(socket.id);
-    if (playerData) {
-      playerData.name = name;
-      PlayerRepository.updateName(playerData.playerId, name).catch(console.error);
-    }
-  });
+  attachAuthHandlers(socket, conn, socketToPlayer, rooms);
 
   socket.on('createRoom', async (roomName: string) => {
     if (currentRoomId) return;
-    if (authPromise) await authPromise;
+    if (conn.authPromise) await conn.authPromise;
 
     const roomId = uuidv4();
-    const name = roomName || `${playerName}'s Room`;
+    const name = roomName || `${conn.playerName}'s Room`;
     const room = new GameRoom(roomId, name);
     rooms.set(roomId, room);
     attachPersistenceCallbacks(room);
 
     const playerData = socketToPlayer.get(socket.id);
-    room.addPlayer(socket.id, playerName, playerData?.playerId);
+    room.addPlayer(socket.id, conn.playerName, playerData?.playerId);
     currentRoomId = roomId;
     socket.join(roomId);
 
@@ -172,18 +110,30 @@ io.on('connection', (socket) => {
 
   socket.on('joinRoom', async (roomId: string) => {
     if (currentRoomId) return;
-    if (authPromise) await authPromise;
+    if (conn.authPromise) await conn.authPromise;
 
     const room = rooms.get(roomId);
     const playerData = socketToPlayer.get(socket.id);
+
+    const isAlreadyInRoom =
+      playerData !== undefined &&
+      room?.hasActivePlayer(playerData.playerId) === true;
 
     const isReconnecting =
       room?.status === 'playing' &&
       playerData !== undefined &&
       room.hasDisconnectedPlayer(playerData.playerId);
 
-    if (room && (room.status === 'waiting' || isReconnecting)) {
-      room.addPlayer(socket.id, playerName, playerData?.playerId);
+    if (room && (room.status === 'waiting' || isReconnecting || isAlreadyInRoom)) {
+      const oldSocketId = room.addPlayer(socket.id, conn.playerName, playerData?.playerId);
+      if (oldSocketId) {
+        const oldSocket = io.sockets.sockets.get(oldSocketId);
+        if (oldSocket) {
+          oldSocket.leave(roomId);
+          oldSocket.emit('kicked', 'You connected from another device.');
+        }
+      }
+      
       currentRoomId = roomId;
       socket.join(roomId);
 

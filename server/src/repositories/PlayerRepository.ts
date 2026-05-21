@@ -22,4 +22,13 @@ export class PlayerRepository {
   static async updateName(id: string, displayName: string): Promise<void> {
     await db.update(players).set({ displayName }).where(eq(players.id, id));
   }
+
+  static async findByUsername(username: string): Promise<PlayerRecord | null> {
+    const result = await db.select().from(players).where(eq(players.username, username)).limit(1);
+    return result[0] ?? null;
+  }
+
+  static async setCredentials(id: string, username: string, passwordHash: string): Promise<void> {
+    await db.update(players).set({ username, passwordHash }).where(eq(players.id, id));
+  }
 }

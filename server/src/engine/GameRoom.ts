@@ -51,8 +51,24 @@ export class GameRoom {
     };
   }
 
-  public addPlayer(socketId: string, name: string, persistentId?: string): void {
-    if (this.players.has(socketId)) return;
+  public addPlayer(socketId: string, name: string, persistentId?: string): string | undefined {
+    if (this.players.has(socketId)) return undefined;
+
+    // Displacing an active connection from another device
+    if (persistentId && this.persistentIdToSocketId.has(persistentId)) {
+      const oldSocketId = this.persistentIdToSocketId.get(persistentId)!;
+      const playerInfo = this.players.get(oldSocketId);
+      if (playerInfo) {
+        this.players.delete(oldSocketId);
+        this.socketToPersistentId.delete(oldSocketId);
+        
+        playerInfo.id = socketId;
+        this.players.set(socketId, playerInfo);
+        this.socketToPersistentId.set(socketId, persistentId);
+        this.persistentIdToSocketId.set(persistentId, socketId);
+        return oldSocketId;
+      }
+    }
 
     // Reconnecting a previously disconnected player
     if (persistentId && this.disconnectedPlayers.has(persistentId)) {
@@ -70,7 +86,7 @@ export class GameRoom {
       if (turnState) {
         turnState.hasActed = (info && info.turn === this.state.turn) ? info.hadActed : false;
       }
-      return;
+      return undefined;
     }
 
     const newPlayer: PlayerInfo = {
@@ -87,6 +103,7 @@ export class GameRoom {
       this.socketToPersistentId.set(socketId, persistentId);
       this.persistentIdToSocketId.set(persistentId, socketId);
     }
+    return undefined;
   }
 
   // force=true: remove completely even during an active game (voluntary leave)
@@ -128,6 +145,10 @@ export class GameRoom {
 
   public hasDisconnectedPlayer(persistentId: string): boolean {
     return this.disconnectedPlayers.has(persistentId);
+  }
+
+  public hasActivePlayer(persistentId: string): boolean {
+    return this.persistentIdToSocketId.has(persistentId);
   }
 
   public markPlayerDisconnected(persistentId: string, playerInfo: PlayerInfo): void {
