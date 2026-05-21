@@ -105,26 +105,37 @@ export function attachAuthHandlers(
     socket.emit('registerSuccess', { username: trimmed });
   });
 
-  socket.on('login', async ({ username, password }: { username: string; password: string }) => {
-    const trimmed = username.trim().toLowerCase();
-    const player = await PlayerRepository.findByUsername(trimmed);
-    if (!player || !player.passwordHash || !await bcrypt.compare(password, player.passwordHash)) {
-      socket.emit('authError', 'Invalid username or password');
-      return;
-    }
+  socket.on('login', ({ username, password }: { username: string; password: string }) => {
+    // Capture then override authPromise so joinRoom/createRoom always await login completion.
+    // Chaining after the previous promise ensures authenticate can't overwrite socketToPlayer
+    // after login has already set it.
+    const prevAuthPromise = conn.authPromise;
+    conn.authPromise = (async () => {
+      if (prevAuthPromise) await prevAuthPromise;
 
-    PlayerRepository.updateLastSeen(player.id).catch(console.error);
-    conn.playerName = player.displayName;
-    socketToPlayer.set(socket.id, { playerId: player.id, token: player.token, name: player.displayName });
-
-    socket.emit('authenticated', { token: player.token, name: player.displayName, username: player.username ?? undefined });
-
-    const activeRoom = await RoomRepository.findActiveRoomForPlayer(player.id);
-    if (activeRoom?.status === 'playing') {
-      const room = rooms.get(activeRoom.id);
-      if (room?.hasDisconnectedPlayer(player.id) || room?.hasActivePlayer(player.id)) {
-        socket.emit('reconnectAvailable', { roomId: activeRoom.id, roomName: activeRoom.name });
+      const trimmed = username.trim().toLowerCase();
+      const player = await PlayerRepository.findByUsername(trimmed);
+      if (!player || !player.passwordHash || !await bcrypt.compare(password, player.passwordHash)) {
+        socket.emit('authError', 'Invalid username or password');
+        return;
       }
-    }
+
+      PlayerRepository.updateLastSeen(player.id).catch(console.error);
+      conn.playerName = player.displayName;
+      socketToPlayer.set(socket.id, { playerId: player.id, token: player.token, name: player.displayName });
+
+      socket.emit('authenticated', { token: player.token, name: player.displayName, username: player.username ?? undefined });
+
+      const activeRoom = await RoomRepository.findActiveRoomForPlayer(player.id);
+      if (activeRoom?.status === 'playing') {
+        const room = rooms.get(activeRoom.id);
+        if (room?.hasDisconnectedPlayer(player.id) || room?.hasActivePlayer(player.id)) {
+          socket.emit('reconnectAvailable', { roomId: activeRoom.id, roomName: activeRoom.name });
+        }
+      }
+    })().catch((err) => {
+      console.error('login error:', err);
+      socket.emit('authError', 'Login failed');
+    });
   });
 }
