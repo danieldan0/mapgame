@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
-import type { CreateRoomRequest, GameState, GameAction, MapSettings, Player, RoomInfo, PlayerInfo, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
-import { DEFAULT_MAP_SETTINGS } from '@mapgame/shared';
+import type { CreateRoomRequest, DiceFormula, GameState, GameAction, MapSettings, Player, RoomInfo, PlayerInfo, RoomRole, RuleSettings, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import { DEFAULT_MAP_SETTINGS, DEFAULT_RULE_SETTINGS } from '@mapgame/shared';
 
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
@@ -33,6 +33,7 @@ export class GameRoom {
   private disconnectedTurnInfo: Map<string, { hadActed: boolean; turn: number }> = new Map();
   private nextPlayerId = 1;
   private mapSettings: Partial<MapSettings> = {};
+  private ruleSettings: Partial<RuleSettings> = {};
 
   constructor(id: string, name: string, initialState?: GameState, settings?: Partial<CreateRoomRequest>) {
     this.id = id;
@@ -41,6 +42,7 @@ export class GameRoom {
     this.maxPlayers = clampMaxPlayers(settings?.maxPlayers);
     this.passwordHash = settings?.password?.trim() || null;
     this.mapSettings = settings?.mapSettings ?? {};
+    this.ruleSettings = settings?.ruleSettings ?? {};
     this.state = initialState ?? generateMap();
   }
 
@@ -51,6 +53,7 @@ export class GameRoom {
       phase:     (raw.phase     as 'placement' | 'playing') ?? 'playing',
       mapWidth:  (raw.mapWidth  as number) ?? 2000,
       mapHeight: (raw.mapHeight as number) ?? 2000,
+      rules:     gameState.rules ?? { ...DEFAULT_RULE_SETTINGS, expandRoll: { ...DEFAULT_RULE_SETTINGS.expandRoll }, attackRoll: { ...DEFAULT_RULE_SETTINGS.attackRoll }, defendRoll: { ...DEFAULT_RULE_SETTINGS.defendRoll } },
     };
     const room = new GameRoom(id, name, restored, settings);
     room.status = 'playing';
@@ -73,6 +76,7 @@ export class GameRoom {
       hasPassword: this.passwordHash !== null,
       maxPlayers: this.maxPlayers,
       mapSettings: this.resolveMapSettings(),
+      ruleSettings: this.resolveRuleSettings(),
     };
   }
 
@@ -89,11 +93,27 @@ export class GameRoom {
       password: this.passwordHash ?? '',
       maxPlayers: this.maxPlayers,
       mapSettings: { ...this.mapSettings },
+      ruleSettings: { ...this.ruleSettings },
     };
   }
 
   private resolveMapSettings(): MapSettings {
     return { ...DEFAULT_MAP_SETTINGS, ...this.mapSettings };
+  }
+
+  private resolveRuleSettings(): RuleSettings {
+    const d = DEFAULT_RULE_SETTINGS;
+    const r = this.ruleSettings;
+    return {
+      expandRoll: { ...d.expandRoll, ...r.expandRoll },
+      attackRoll: { ...d.attackRoll, ...r.attackRoll },
+      defendRoll: { ...d.defendRoll, ...r.defendRoll },
+      claimCost:        r.claimCost        ?? d.claimCost,
+      cityCost:         r.cityCost         ?? d.cityCost,
+      seaTravelCost:    r.seaTravelCost    ?? d.seaTravelCost,
+      powerPerCity:     r.powerPerCity     ?? d.powerPerCity,
+      maxEncircledArea: r.maxEncircledArea ?? d.maxEncircledArea,
+    };
   }
 
   public hasOpenSeat(): boolean {
@@ -142,6 +162,19 @@ export class GameRoom {
       if ('seed' in ms) this.mapSettings.seed = ms.seed;
 
       if (this.status === 'waiting') this.generatePreview();
+    }
+
+    if (settings.ruleSettings !== undefined) {
+      const rs = settings.ruleSettings;
+      if (rs.expandRoll !== undefined) this.ruleSettings.expandRoll = validateDiceFormula(rs.expandRoll);
+      if (rs.attackRoll !== undefined) this.ruleSettings.attackRoll = validateDiceFormula(rs.attackRoll);
+      if (rs.defendRoll !== undefined) this.ruleSettings.defendRoll = validateDiceFormula(rs.defendRoll);
+      if (rs.claimCost        !== undefined) this.ruleSettings.claimCost        = clampInt(rs.claimCost, 0, 20);
+      if (rs.cityCost         !== undefined) this.ruleSettings.cityCost         = clampInt(rs.cityCost, 0, 20);
+      if (rs.seaTravelCost    !== undefined) this.ruleSettings.seaTravelCost    = clampInt(rs.seaTravelCost, 0, 20);
+      if (rs.powerPerCity     !== undefined) this.ruleSettings.powerPerCity     = clampInt(rs.powerPerCity, 0, 20);
+      if (rs.maxEncircledArea !== undefined) this.ruleSettings.maxEncircledArea = clampInt(rs.maxEncircledArea, 1, 50);
+      this.state.rules = this.resolveRuleSettings();
     }
   }
 
@@ -307,6 +340,7 @@ export class GameRoom {
   public startGame(): void {
     this.status = 'playing';
     this.state = generateMap(this.getGamePlayers(), this.mapSettings);
+    this.state.rules = this.resolveRuleSettings();
     startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
     this.onGameStart?.();
@@ -318,6 +352,7 @@ export class GameRoom {
 
   public regenerateMap(): void {
     this.state = generateMap(this.getGamePlayers(), this.mapSettings);
+    this.state.rules = this.resolveRuleSettings();
     startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
   }
@@ -520,6 +555,20 @@ export class GameRoom {
 
 function clampMaxPlayers(maxPlayers?: number): number {
   return Math.max(2, Math.min(99, Number(maxPlayers) || 6));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function validateDiceFormula(f: DiceFormula): DiceFormula {
+  return {
+    count:            clampInt(f.count, 1, 10),
+    sides:            clampInt(f.sides, 2, 100),
+    bonus:            clampInt(f.bonus, -20, 100),
+    diePowerFactor:   Math.max(0, Math.min(10, f.diePowerFactor ?? 0)),
+    bonusPowerFactor: Math.max(-10, Math.min(10, f.bonusPowerFactor ?? 0)),
+  };
 }
 
 function generatePlayerColor(playerId: number): number {

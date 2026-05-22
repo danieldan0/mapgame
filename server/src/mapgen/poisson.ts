@@ -13,6 +13,7 @@ export function poissonDiskSample(
   rMin: number,
   rMax: number,
   k = 30,
+  rng: () => number = Math.random,
 ): [number, number][] {
   // Cell size guarantees at most one point per cell for the minimum radius.
   const cellSize = rMin / Math.SQRT2;
@@ -70,20 +71,20 @@ export function poissonDiskSample(
 
   // Seed with a point near the centre.
   addPoint(
-    width / 2 + (Math.random() - 0.5) * width * 0.1,
-    height / 2 + (Math.random() - 0.5) * height * 0.1,
+    width / 2 + (rng() - 0.5) * width * 0.1,
+    height / 2 + (rng() - 0.5) * height * 0.1,
   );
 
   while (active.length > 0) {
-    const ai = Math.floor(Math.random() * active.length);
+    const ai = Math.floor(rng() * active.length);
     const pIdx = active[ai];
     const [px, py] = points[pIdx];
     const r = radii[pIdx];
 
     let placed = false;
     for (let attempt = 0; attempt < k; attempt++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = r + Math.random() * r; // annulus [r, 2r]
+      const angle = rng() * Math.PI * 2;
+      const dist = r + rng() * r; // annulus [r, 2r]
       const cx = px + Math.cos(angle) * dist;
       const cy = py + Math.sin(angle) * dist;
       const cr = getRadius(cx, cy);

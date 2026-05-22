@@ -128,6 +128,7 @@ async function loadActiveRooms() {
           password: passwordHash,
           maxPlayers: roomRecord.maxPlayers,
           mapSettings: roomRecord.mapSettings ?? {},
+          ruleSettings: roomRecord.ruleSettings ?? {},
         });
         attachPersistenceCallbacks(room);
         const dbPlayers = await RoomRepository.getPlayersInRoom(roomRecord.id);
@@ -151,6 +152,7 @@ async function loadActiveRooms() {
         password: passwordHash,
         maxPlayers: roomRecord.maxPlayers,
         mapSettings: roomRecord.mapSettings ?? {},
+        ruleSettings: roomRecord.ruleSettings ?? {},
       });
       attachPersistenceCallbacks(room);
       room.generatePreview();
@@ -353,16 +355,23 @@ io.on('connection', (socket) => {
     if (!currentRoomId) return;
 
     const room = rooms.get(currentRoomId);
-    if (!room || room.status !== 'waiting') return;
+    if (!room) return;
 
     if (!room.canManageRoom(socket.id)) {
       socket.emit('error', 'Only hosts and admins can edit room settings');
       return;
     }
 
-    const storedSettings: UpdateRoomSettingsRequest = {
-      ...settings,
-    };
+    if (room.status === 'playing') {
+      if (settings.ruleSettings === undefined) return;
+      room.updateSettings({ ruleSettings: settings.ruleSettings });
+      RoomRepository.updateSettings(currentRoomId, room.getSettings()).catch(console.error);
+      io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+      io.to(currentRoomId).emit('gameState', room.getState());
+      return;
+    }
+
+    const storedSettings: UpdateRoomSettingsRequest = { ...settings };
     if (settings.password !== undefined) {
       storedSettings.password = await hashRoomPassword(settings.password) ?? '';
     }

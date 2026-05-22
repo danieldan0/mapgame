@@ -3,6 +3,7 @@ import { db } from '../db';
 import { players, roomPlayers, rooms } from '../db/schema';
 import type { CreateRoomRequest, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
 
+
 export type RoomRecord = typeof rooms.$inferSelect;
 
 export class RoomRepository {
@@ -14,6 +15,7 @@ export class RoomRepository {
       passwordHash: settings.password ?? null,
       maxPlayers: settings.maxPlayers,
       mapSettings: settings.mapSettings ?? {},
+      ruleSettings: settings.ruleSettings ?? {},
     }).returning();
     return result[0];
   }
@@ -26,6 +28,7 @@ export class RoomRepository {
     if (settings.maxPlayers !== undefined) updates.maxPlayers = settings.maxPlayers;
 
     if (settings.mapSettings !== undefined) updates.mapSettings = settings.mapSettings;
+    if (settings.ruleSettings !== undefined) updates.ruleSettings = settings.ruleSettings;
 
     if (Object.keys(updates).length === 0) return;
     await db.update(rooms).set(updates).where(eq(rooms.id, id));

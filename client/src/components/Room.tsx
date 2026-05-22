@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { GameState, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../../shared/src/types';
 import { MapSettingsForm } from './MapSettingsForm';
+import { RuleSettingsForm } from './RuleSettingsForm';
 import { Map } from './Map';
 import { RoomSettingsForm } from './RoomSettingsForm';
 
@@ -52,6 +53,7 @@ export const Room: React.FC<RoomProps> = ({
   const [customColor, setCustomColor] = useState(me ? colorToHex(me.color) : '#ff4500');
   const [isEditingSettings, setIsEditingSettings] = useState(false);
   const [isEditingMapSettings, setIsEditingMapSettings] = useState(false);
+  const [isEditingRuleSettings, setIsEditingRuleSettings] = useState(false);
   const isHost = me?.roles.includes('host') ?? false;
   const canManageRoom = isHost || (me?.roles.includes('admin') ?? false);
   const isPlayer = me?.roles.includes('player') ?? false;
@@ -133,6 +135,25 @@ export const Room: React.FC<RoomProps> = ({
                     setIsEditingMapSettings(false);
                   }}
                   onCancel={() => setIsEditingMapSettings(false)}
+                />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <button onClick={() => setIsEditingRuleSettings(!isEditingRuleSettings)} style={{ padding: '6px 12px' }}>
+              {isEditingRuleSettings ? 'Close Rule Settings' : 'Edit Rule Settings'}
+            </button>
+            {isEditingRuleSettings && (
+              <div style={{ marginTop: 12, border: '1px solid #555', borderRadius: 6, padding: 12 }}>
+                <RuleSettingsForm
+                  initialSettings={currentRoom.ruleSettings}
+                  submitLabel="Save Rule Settings"
+                  onSubmit={(settings) => {
+                    handleUpdateRoomSettings({ ruleSettings: settings });
+                    setIsEditingRuleSettings(false);
+                  }}
+                  onCancel={() => setIsEditingRuleSettings(false)}
                 />
               </div>
             )}

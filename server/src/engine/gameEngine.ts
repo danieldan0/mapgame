@@ -1,13 +1,14 @@
-import type { GameAction, GameState, Tile } from '@mapgame/shared';
+import type { DiceFormula, GameAction, GameState, RuleSettings, Tile } from '@mapgame/shared';
+import { DEFAULT_RULE_SETTINGS } from '@mapgame/shared';
 
 interface ActionResult {
   actionAccepted: boolean;
   stateChanged: boolean;
 }
 
-const CLAIM_COST = 1;
-const SEA_TRAVEL_COST = 3;
-const MAX_ENCIRCLED_REGION_SIZE = 5;
+function rules(gameState: GameState): RuleSettings {
+  return gameState.rules ?? DEFAULT_RULE_SETTINGS;
+}
 
 export function startPlacementPhase(gameState: GameState): void {
   gameState.phase = 'placement';
@@ -15,7 +16,7 @@ export function startPlacementPhase(gameState: GameState): void {
     playerTurns: Object.fromEntries(
       Object.keys(gameState.players).map(playerId => [
         Number(playerId),
-        { roll: 0, power: 0, dieSize: 0, hasActed: false },
+        { expandRoll: 0, attackRoll: 0, power: 0, hasActed: false },
       ])
     ),
     defenseRolls: {},
@@ -52,12 +53,10 @@ export function handleAction(gameState: GameState, action: GameAction, actingPla
       if (tile.ownerId !== null && tile.ownerId !== actingPlayerId) {
         return { actionAccepted: false, stateChanged: false };
       }
-      // Unset player's previous tile
       for (const t of Object.values(gameState.tiles)) {
         if (t.ownerId === actingPlayerId) { t.ownerId = null; break; }
       }
       tile.ownerId = actingPlayerId;
-      // hasActed stays false - player must CONFIRM_PLACEMENT to lock in
       return { actionAccepted: true, stateChanged: true };
     }
 
@@ -86,10 +85,10 @@ export function handleAction(gameState: GameState, action: GameAction, actingPla
   }
 
   if (action.actionType === 'EXPAND') {
-    return submitExpandPlan(gameState, actingPlayerId, targetTileIds, playerTurn.roll);
+    return submitExpandPlan(gameState, actingPlayerId, targetTileIds, playerTurn.expandRoll);
   }
 
-  return submitAttackPlan(gameState, actingPlayerId, targetTileIds, playerTurn.roll, action.defenderId);
+  return submitAttackPlan(gameState, actingPlayerId, targetTileIds, playerTurn.attackRoll, action.defenderId);
 }
 
 export function haveAllPlayersActed(gameState: GameState): boolean {
@@ -118,7 +117,7 @@ export function previewAttack(gameState: GameState, attackerId: number, defender
   }
 
   const hasAttackableBorder = Object.values(gameState.tiles).some(tile => {
-    return tile.ownerId === defenderId && getClaimCost(gameState, attackerId, tile, new Set()) <= playerTurn.roll;
+    return tile.ownerId === defenderId && getClaimCost(gameState, attackerId, tile, new Set()) <= playerTurn.attackRoll;
   });
   if (!hasAttackableBorder) return false;
 
@@ -190,6 +189,7 @@ function submitAttackPlan(
 }
 
 function applyEncirclement(gameState: GameState, actingPlayerId: number): void {
+  const maxArea = rules(gameState).maxEncircledArea;
   const visitedTileIds = new Set<number>();
 
   for (const tile of Object.values(gameState.tiles)) {
@@ -206,7 +206,7 @@ function applyEncirclement(gameState: GameState, actingPlayerId: number): void {
 
     if (
       region.tileIds.length > 0 &&
-      region.tileIds.length <= MAX_ENCIRCLED_REGION_SIZE &&
+      region.tileIds.length <= maxArea &&
       region.isFullySurrounded
     ) {
       for (const tileId of region.tileIds) {
@@ -273,10 +273,12 @@ function getDefenseRoll(gameState: GameState, attackerId: number, defenderId: nu
   const existingRoll = gameState.turnState.defenseRolls[key];
   if (existingRoll) return existingRoll;
 
+  const power = getPlayerPower(gameState, defenderId);
   const defenseRoll = {
     attackerId,
     defenderId,
-    ...rollForPlayer(gameState, defenderId),
+    roll: rollDice(rules(gameState).defendRoll, power),
+    power,
   };
   gameState.turnState.defenseRolls[key] = defenseRoll;
   return defenseRoll;
@@ -332,6 +334,10 @@ function getClaimCost(
   targetTile: Tile,
   claimedThisPlan: Set<number>
 ): number {
+  const r = rules(gameState);
+  const tileCost = targetTile.typeId === 'city' ? r.cityCost : r.claimCost;
+  const seaTravelCost = r.seaTravelCost;
+
   const visitedSeaTileIds = new Set<number>();
   const queue: Array<{ tileId: number; cost: number }> = [];
 
@@ -340,11 +346,11 @@ function getClaimCost(
     if (!neighbor) continue;
 
     if (neighbor.ownerId === actingPlayerId || claimedThisPlan.has(neighborId)) {
-      return CLAIM_COST;
+      return tileCost;
     }
 
     if (neighbor.typeId === 'sea') {
-      queue.push({ tileId: neighborId, cost: SEA_TRAVEL_COST + CLAIM_COST });
+      queue.push({ tileId: neighborId, cost: seaTravelCost + tileCost });
       visitedSeaTileIds.add(neighborId);
     }
   }
@@ -367,7 +373,7 @@ function getClaimCost(
 
       if (neighbor.typeId === 'sea' && !visitedSeaTileIds.has(neighborId)) {
         visitedSeaTileIds.add(neighborId);
-        queue.push({ tileId: neighborId, cost: current.cost + SEA_TRAVEL_COST });
+        queue.push({ tileId: neighborId, cost: current.cost + seaTravelCost });
       }
     }
   }
@@ -383,15 +389,24 @@ function getDefenseRollKey(attackerId: number, defenderId: number): string {
   return `${attackerId}:${defenderId}`;
 }
 
-function rollForPlayer(gameState: GameState, playerId: number): { roll: number; power: number; dieSize: number } {
+function rollForPlayer(gameState: GameState, playerId: number): { expandRoll: number; attackRoll: number; power: number } {
+  const r = rules(gameState);
   const power = getPlayerPower(gameState, playerId);
-  const dieSize = 10 + power;
-
   return {
-    roll: rollDie(dieSize),
+    expandRoll: rollDice(r.expandRoll, power),
+    attackRoll: rollDice(r.attackRoll, power),
     power,
-    dieSize,
   };
+}
+
+function rollDice(formula: DiceFormula, power: number): number {
+  const effectiveSides = Math.max(1, formula.sides + Math.floor(power * formula.diePowerFactor));
+  const effectiveBonus = formula.bonus + Math.floor(power * formula.bonusPowerFactor);
+  let result = effectiveBonus;
+  for (let i = 0; i < formula.count; i++) {
+    result += Math.floor(Math.random() * effectiveSides) + 1;
+  }
+  return result;
 }
 
 function getPlayerPower(gameState: GameState, playerId: number): number {
@@ -399,11 +414,7 @@ function getPlayerPower(gameState: GameState, playerId: number): number {
     return tile.ownerId === playerId && tile.typeId === 'city';
   }).length;
 
-  return ownedCityCount * 2;
-}
-
-function rollDie(dieSize: number): number {
-  return Math.floor(Math.random() * dieSize) + 1;
+  return ownedCityCount * rules(gameState).powerPerCity;
 }
 
 function playerHasTiles(gameState: GameState, playerId: number): boolean {

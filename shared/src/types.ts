@@ -18,6 +18,40 @@ export interface Tile {
   ownerId: number | null;
 }
 
+export interface DiceFormula {
+  count: number;
+  sides: number;
+  bonus: number;
+  diePowerFactor: number;   // power * this is added to the die's sides
+  bonusPowerFactor: number; // power * this is added to the flat bonus
+}
+
+export interface RuleSettings {
+  expandRoll: DiceFormula;
+  attackRoll: DiceFormula;
+  defendRoll: DiceFormula;
+  claimCost: number;
+  cityCost: number;
+  seaTravelCost: number;
+  powerPerCity: number;
+  maxEncircledArea: number;
+}
+
+export const DEFAULT_DICE_FORMULA: DiceFormula = {
+  count: 1, sides: 10, bonus: 0, diePowerFactor: 1, bonusPowerFactor: 0,
+};
+
+export const DEFAULT_RULE_SETTINGS: RuleSettings = {
+  expandRoll: { ...DEFAULT_DICE_FORMULA },
+  attackRoll: { ...DEFAULT_DICE_FORMULA },
+  defendRoll: { ...DEFAULT_DICE_FORMULA },
+  claimCost: 1,
+  cityCost: 1,
+  seaTravelCost: 3,
+  powerPerCity: 2,
+  maxEncircledArea: 5,
+};
+
 export interface GameState {
   tiles: Record<number, Tile>;
   players: Record<number, Player>;
@@ -27,14 +61,15 @@ export interface GameState {
   tileTypes: Record<string, TileType>;
   mapWidth: number;
   mapHeight: number;
+  rules: RuleSettings;
 }
 
 export type PlannedActionType = 'EXPAND' | 'ATTACK';
 
 export interface PlayerTurnState {
-  roll: number;
+  expandRoll: number;
+  attackRoll: number;
   power: number;
-  dieSize: number;
   hasActed: boolean;
 }
 
@@ -43,7 +78,6 @@ export interface DefenseRoll {
   defenderId: number;
   roll: number;
   power: number;
-  dieSize: number;
 }
 
 export interface TurnState {
@@ -73,6 +107,7 @@ export interface RoomInfo {
   hasPassword: boolean;
   maxPlayers: number;
   mapSettings: MapSettings;
+  ruleSettings: RuleSettings;
 }
 
 export interface RoleUpdateRequest {
@@ -91,12 +126,14 @@ export interface RoomSettingsRequest {
   password?: string;
   maxPlayers: number;
   mapSettings?: Partial<MapSettings>;
+  ruleSettings?: Partial<RuleSettings>;
 }
 
 export type CreateRoomRequest = RoomSettingsRequest;
 
 export interface UpdateRoomSettingsRequest extends Partial<RoomSettingsRequest> {
   mapSettings?: Partial<MapSettings>;
+  ruleSettings?: Partial<RuleSettings>;
 }
 
 export interface JoinRoomRequest {

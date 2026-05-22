@@ -245,6 +245,7 @@ function App() {
       onAction={handleAction}
       onPreviewAttack={handlePreviewAttack}
       onRegenerate={handleRegenerate}
+      onUpdateRoomSettings={handleUpdateRoomSettings}
       onLeaveRoom={handleLeaveRoom}
     />
   );

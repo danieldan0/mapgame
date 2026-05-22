@@ -1,8 +1,10 @@
 import { Delaunay } from 'd3-delaunay';
 import type { GameState, MapSettings, Player, Tile } from '@mapgame/shared';
+import { DEFAULT_RULE_SETTINGS } from '@mapgame/shared';
 import { DEFAULT_TILE_TYPES, DEFAULT_PLAYERS } from '../constants';
 import { PerlinNoise } from './noise';
 import { poissonDiskSample } from './poisson';
+import { makeRng } from './rng';
 
 export function generateMap(
   players: Record<number, Player> = DEFAULT_PLAYERS,
@@ -20,7 +22,9 @@ export function generateMap(
   const persistence      = settings.noisePersistence ?? 0.5;
   const lacunarity       = settings.noiseLacunarity  ?? 2.0;
 
-  const noise = new PerlinNoise(settings.seed);
+  const seed = settings.seed ?? 0;
+  const noise = new PerlinNoise(seed);
+  const rng = makeRng(seed ^ 0x9e3779b9);
   const baseFreq = 1 / baseWavelength;
 
   function heightAt(x: number, y: number): number {
@@ -38,7 +42,7 @@ export function generateMap(
   }
 
   // 1. Generate tile centres via variable-density Poisson disk sampling.
-  const centres = poissonDiskSample(width, height, radiusAt, rLand, rSea);
+  const centres = poissonDiskSample(width, height, radiusAt, rLand, rSea, 30, rng);
 
   // 2. Build Voronoi tessellation.
   const flat = new Float64Array(centres.length * 2);
@@ -70,7 +74,7 @@ export function generateMap(
     .filter(id => tiles[id].typeId === 'land');
 
   for (let i = landIds.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [landIds[i], landIds[j]] = [landIds[j], landIds[i]];
   }
 
@@ -97,5 +101,6 @@ export function generateMap(
     tileTypes: { ...DEFAULT_TILE_TYPES },
     mapWidth: width,
     mapHeight: height,
+    rules: { ...DEFAULT_RULE_SETTINGS, expandRoll: { ...DEFAULT_RULE_SETTINGS.expandRoll }, attackRoll: { ...DEFAULT_RULE_SETTINGS.attackRoll }, defendRoll: { ...DEFAULT_RULE_SETTINGS.defendRoll } },
   };
 }

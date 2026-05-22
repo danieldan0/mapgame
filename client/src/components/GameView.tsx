@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Map } from './Map';
 import { MapSettingsForm } from './MapSettingsForm';
-import type { GameAction, GameState, MapSettings, PlannedActionType, RoomInfo, Tile } from '../../../shared/src/types';
+import { RuleSettingsForm } from './RuleSettingsForm';
+import type { DiceFormula, GameAction, GameState, MapSettings, PlannedActionType, RoomInfo, RuleSettings, Tile } from '../../../shared/src/types';
 
 interface GameViewProps {
   currentRoom: RoomInfo | null;
@@ -10,6 +11,7 @@ interface GameViewProps {
   onAction: (action: GameAction) => void;
   onPreviewAttack: (defenderId: number) => void;
   onRegenerate: (settings?: Partial<MapSettings>) => void;
+  onUpdateRoomSettings: (settings: { ruleSettings: RuleSettings }) => void;
   onLeaveRoom: () => void;
 }
 
@@ -17,14 +19,28 @@ function getDefenseRollKey(attackerId: number, defenderId: number): string {
   return `${attackerId}:${defenderId}`;
 }
 
+function formatDiceWithPower(f: DiceFormula, power: number): string {
+  const parts: string[] = [];
+  if (f.diePowerFactor !== 0 && power !== 0) {
+    const pStr = f.diePowerFactor === 1 ? `+${power}` : `+${power}×${f.diePowerFactor}`;
+    parts.push(`${f.count}d(${f.sides}${pStr})`);
+  } else {
+    parts.push(`${f.count}d${f.sides}`);
+  }
+  if (f.bonus !== 0) parts.push(f.bonus > 0 ? `+${f.bonus}` : `${f.bonus}`);
+  if (f.bonusPowerFactor !== 0 && power !== 0) {
+    const abs = Math.abs(f.bonusPowerFactor);
+    const sign = f.bonusPowerFactor > 0 ? '+' : '-';
+    parts.push(abs === 1 ? `${sign}${power}` : `${sign}${power}×${abs}`);
+  }
+  return parts.join('');
+}
+
 function getDefenseRollLabel(gameState: GameState | null, attackerId: number | null, defenderId: number): string {
   if (!gameState || attackerId === null) return '...';
   const defenseRoll = gameState.turnState.defenseRolls[getDefenseRollKey(attackerId, defenderId)];
-  return defenseRoll ? `${defenseRoll.roll}/d${defenseRoll.dieSize}` : '...';
+  return defenseRoll ? `${defenseRoll.roll}` : '...';
 }
-
-const CLAIM_COST = 1;
-const SEA_TRAVEL_COST = 3;
 
 export const GameView: React.FC<GameViewProps> = ({
   currentRoom,
@@ -33,6 +49,7 @@ export const GameView: React.FC<GameViewProps> = ({
   onAction,
   onPreviewAttack,
   onRegenerate,
+  onUpdateRoomSettings,
   onLeaveRoom
 }) => {
   const [actionType, setActionType] = useState<PlannedActionType>('EXPAND');
@@ -40,6 +57,7 @@ export const GameView: React.FC<GameViewProps> = ({
   const [lockedDefenderId, setLockedDefenderId] = useState<number | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [isEditingMapSettings, setIsEditingMapSettings] = useState(false);
+  const [isEditingRuleSettings, setIsEditingRuleSettings] = useState(false);
 
   const localPlayer = localPlayerId === null ? null : gameState?.players[localPlayerId] ?? null;
   const localTurn = localPlayerId === null ? null : gameState?.turnState.playerTurns[localPlayerId] ?? null;
@@ -66,10 +84,10 @@ export const GameView: React.FC<GameViewProps> = ({
 
   const claimBudget = useMemo(() => {
     if (!localTurn) return 0;
-    if (actionType === 'EXPAND') return localTurn.roll;
-    if (selectedDefenderId === null) return localTurn.roll;
+    if (actionType === 'EXPAND') return localTurn.expandRoll;
+    if (selectedDefenderId === null) return localTurn.attackRoll;
     if (defenseRoll === null) return 0;
-    return Math.max(0, localTurn.roll - defenseRoll);
+    return Math.max(0, localTurn.attackRoll - defenseRoll);
   }, [actionType, defenseRoll, localTurn, selectedDefenderId]);
 
   const selectedPlanCost = useMemo(() => {
@@ -280,13 +298,24 @@ export const GameView: React.FC<GameViewProps> = ({
         ) : (
           <>
             <div style={{ marginTop: '8px' }}>
-              Turn {gameState?.turn ?? '-'} | Roll: {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} | Power: {localTurn?.power ?? '-'} | Points: {selectedPlanCost}/{claimBudget}
+              Turn {gameState?.turn ?? '-'} | Power: {localTurn?.power ?? '-'}
+              {localTurn && gameState && actionType === 'EXPAND' && (
+                <> | Expand: {localTurn.expandRoll} <span style={{ color: '#888', fontSize: '11px' }}>({formatDiceWithPower(gameState.rules.expandRoll, localTurn.power)})</span></>
+              )}
+              {localTurn && gameState && actionType === 'ATTACK' && (
+                <> | Attack: {localTurn.attackRoll} <span style={{ color: '#888', fontSize: '11px' }}>({formatDiceWithPower(gameState.rules.attackRoll, localTurn.power)})</span></>
+              )}
+              {' '}| Points: {selectedPlanCost}/{claimBudget}
               {localTurn?.hasActed && ' | Action submitted'}
               {!hasOwnedTiles && ' | No tiles left'}
             </div>
             {actionType === 'ATTACK' && selectedDefenderId !== null && (
               <div style={{ marginTop: '6px' }}>
-                Attack {localTurn ? `${localTurn.roll}/d${localTurn.dieSize}` : '-'} - Defense {getDefenseRollLabel(gameState, localPlayerId, selectedDefenderId)} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}
+                {(() => {
+                  const dr = gameState ? gameState.turnState.defenseRolls[getDefenseRollKey(localPlayerId!, selectedDefenderId)] : null;
+                  const defFormula = gameState && dr ? ` (${formatDiceWithPower(gameState.rules.defendRoll, dr.power)})` : '';
+                  return <>Attack {localTurn?.attackRoll ?? '-'} − Defense {getDefenseRollLabel(gameState, localPlayerId, selectedDefenderId)}{defFormula} = {defenseRoll === null ? '...' : claimBudget} claims vs {gameState?.players[selectedDefenderId]?.name}</>;
+                })()}
               </div>
             )}
             {planNotice && (
@@ -325,9 +354,14 @@ export const GameView: React.FC<GameViewProps> = ({
                 Skip Turn
               </button>
               {canManageRoom && (
-                <button onClick={() => setIsEditingMapSettings(v => !v)} style={{ padding: '5px 10px', cursor: 'pointer' }}>
-                  {isEditingMapSettings ? 'Close Map Settings' : 'Map Settings'}
-                </button>
+                <>
+                  <button onClick={() => setIsEditingMapSettings(v => !v)} style={{ padding: '5px 10px', cursor: 'pointer' }}>
+                    {isEditingMapSettings ? 'Close Map Settings' : 'Map Settings'}
+                  </button>
+                  <button onClick={() => setIsEditingRuleSettings(v => !v)} style={{ padding: '5px 10px', cursor: 'pointer' }}>
+                    {isEditingRuleSettings ? 'Close Rule Settings' : 'Rule Settings'}
+                  </button>
+                </>
               )}
               <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
                 Leave Match
@@ -355,6 +389,26 @@ export const GameView: React.FC<GameViewProps> = ({
               submitLabel="Save & Regenerate"
               onSubmit={handleRegenerate}
               onCancel={() => setIsEditingMapSettings(false)}
+            />
+          </div>
+        </div>
+      )}
+      {canManageRoom && isEditingRuleSettings && currentRoom && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)' }}
+          onClick={() => setIsEditingRuleSettings(false)}
+        >
+          <div style={{ background: '#fff', color: '#333', borderRadius: 8, padding: '20px 24px', maxWidth: 480, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 16px', color: '#333' }}>Rule Settings</h2>
+            <RuleSettingsForm
+              initialSettings={currentRoom.ruleSettings}
+              submitLabel="Save Rules"
+              onSubmit={(settings) => {
+                onUpdateRoomSettings({ ruleSettings: settings });
+                setIsEditingRuleSettings(false);
+              }}
+              onCancel={() => setIsEditingRuleSettings(false)}
             />
           </div>
         </div>
@@ -452,6 +506,10 @@ function getClaimCost(
   localPlayerId: number,
   selectedTileIds: Set<number>
 ): number {
+  const rules = gameState.rules;
+  const tileCost = targetTile.typeId === 'city' ? rules.cityCost : rules.claimCost;
+  const seaTravelCost = rules.seaTravelCost;
+
   const visitedSeaTileIds = new Set<number>();
   const queue: Array<{ tileId: number; cost: number }> = [];
 
@@ -460,11 +518,11 @@ function getClaimCost(
     if (!neighbor) continue;
 
     if (neighbor.ownerId === localPlayerId || selectedTileIds.has(neighborId)) {
-      return CLAIM_COST;
+      return tileCost;
     }
 
     if (neighbor.typeId === 'sea') {
-      queue.push({ tileId: neighborId, cost: SEA_TRAVEL_COST + CLAIM_COST });
+      queue.push({ tileId: neighborId, cost: seaTravelCost + tileCost });
       visitedSeaTileIds.add(neighborId);
     }
   }
@@ -487,7 +545,7 @@ function getClaimCost(
 
       if (neighbor.typeId === 'sea' && !visitedSeaTileIds.has(neighborId)) {
         visitedSeaTileIds.add(neighborId);
-        queue.push({ tileId: neighborId, cost: current.cost + SEA_TRAVEL_COST });
+        queue.push({ tileId: neighborId, cost: current.cost + seaTravelCost });
       }
     }
   }
