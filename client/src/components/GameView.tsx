@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Map } from './Map';
-import type { GameAction, GameState, PlannedActionType, RoomInfo, Tile } from '../../../shared/src/types';
+import { MapSettingsForm } from './MapSettingsForm';
+import type { GameAction, GameState, MapSettings, PlannedActionType, RoomInfo, Tile } from '../../../shared/src/types';
 
 interface GameViewProps {
   currentRoom: RoomInfo | null;
@@ -8,7 +9,7 @@ interface GameViewProps {
   localPlayerId: number | null;
   onAction: (action: GameAction) => void;
   onPreviewAttack: (defenderId: number) => void;
-  onRegenerate: () => void;
+  onRegenerate: (settings?: Partial<MapSettings>) => void;
   onLeaveRoom: () => void;
 }
 
@@ -38,6 +39,7 @@ export const GameView: React.FC<GameViewProps> = ({
   const [selectedTileIds, setSelectedTileIds] = useState<number[]>([]);
   const [lockedDefenderId, setLockedDefenderId] = useState<number | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
+  const [isEditingMapSettings, setIsEditingMapSettings] = useState(false);
 
   const localPlayer = localPlayerId === null ? null : gameState?.players[localPlayerId] ?? null;
   const localTurn = localPlayerId === null ? null : gameState?.turnState.playerTurns[localPlayerId] ?? null;
@@ -236,11 +238,12 @@ export const GameView: React.FC<GameViewProps> = ({
     onAction({ type: 'END_TURN' });
   };
 
-  const handleRegenerate = () => {
+  const handleRegenerate = (settings?: Partial<MapSettings>) => {
     setSelectedTileIds([]);
     setLockedDefenderId(null);
     setPlanNotice(null);
-    onRegenerate();
+    setIsEditingMapSettings(false);
+    onRegenerate(settings);
   };
 
   return (
@@ -322,8 +325,8 @@ export const GameView: React.FC<GameViewProps> = ({
                 Skip Turn
               </button>
               {canManageRoom && (
-                <button onClick={handleRegenerate} style={{ padding: '5px 10px', cursor: 'pointer' }}>
-                  Regenerate Map
+                <button onClick={() => setIsEditingMapSettings(v => !v)} style={{ padding: '5px 10px', cursor: 'pointer' }}>
+                  {isEditingMapSettings ? 'Close Map Settings' : 'Map Settings'}
                 </button>
               )}
               <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
@@ -339,6 +342,23 @@ export const GameView: React.FC<GameViewProps> = ({
         selectedTileIds={isPlacementPhase && myPlacedTileId !== null ? new Set([myPlacedTileId]) : selectedTileIdSet}
         onPolygonClick={handlePolygonClick}
       />
+      {canManageRoom && isEditingMapSettings && currentRoom && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)' }}
+          onClick={() => setIsEditingMapSettings(false)}
+        >
+          <div style={{ background: '#fff', color: '#333', borderRadius: 8, padding: '20px 24px', maxWidth: 480, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 16px', color: '#333' }}>Map Settings</h2>
+            <MapSettingsForm
+              initialSettings={currentRoom.mapSettings}
+              submitLabel="Save & Regenerate"
+              onSubmit={handleRegenerate}
+              onCancel={() => setIsEditingMapSettings(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

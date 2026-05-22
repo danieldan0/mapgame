@@ -2,7 +2,7 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import bcrypt from 'bcryptjs';
-import type { CreateRoomRequest, GameAction, InviteRoomInfo, JoinRoomRequest, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import type { CreateRoomRequest, GameAction, InviteRoomInfo, JoinRoomRequest, MapSettings, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '@mapgame/shared';
 import { GameRoom } from './engine/GameRoom';
 import { v4 as uuidv4 } from 'uuid';
 import { runMigrations } from './db';
@@ -89,6 +89,9 @@ function attachPersistenceCallbacks(room: GameRoom) {
   room.onTurnEnd = (state) => {
     SnapshotRepository.save(room.id, state.turn, state).catch(console.error);
   };
+  room.onPreviewReady = (preview) => {
+    io.to(room.id).emit('mapPreview', preview);
+  };
 }
 
 function syncRoomPlayerPersistence(roomId: string, socketId: string, room: GameRoom): void {
@@ -124,6 +127,7 @@ async function loadActiveRooms() {
           isPrivate: roomRecord.isPrivate,
           password: passwordHash,
           maxPlayers: roomRecord.maxPlayers,
+          mapSettings: roomRecord.mapSettings ?? {},
         });
         attachPersistenceCallbacks(room);
         const dbPlayers = await RoomRepository.getPlayersInRoom(roomRecord.id);
@@ -146,8 +150,10 @@ async function loadActiveRooms() {
         isPrivate: roomRecord.isPrivate,
         password: passwordHash,
         maxPlayers: roomRecord.maxPlayers,
+        mapSettings: roomRecord.mapSettings ?? {},
       });
       attachPersistenceCallbacks(room);
+      room.generatePreview();
       rooms.set(roomRecord.id, room);
       console.log(`Loaded waiting room "${roomRecord.name}"`);
     }
@@ -176,10 +182,12 @@ io.on('connection', (socket) => {
     const storedSettings = {
       ...settings,
       password: await hashRoomPassword(settings.password),
+      mapSettings: { seed: Math.floor(Math.random() * 1_000_000) },
     };
     const room = new GameRoom(roomId, settings.name, undefined, storedSettings);
     rooms.set(roomId, room);
     attachPersistenceCallbacks(room);
+    room.generatePreview();
 
     const playerData = socketToPlayer.get(socket.id);
     room.addPlayer(socket.id, conn.playerName, playerData?.playerId);
@@ -273,6 +281,9 @@ io.on('connection', (socket) => {
       if (room.status === 'playing') {
         socket.emit('gameStarted');
         socket.emit('gameState', room.getState());
+      } else {
+        const preview = room.getPreview();
+        if (preview) socket.emit('mapPreview', preview);
       }
     } else {
       socket.emit('error', 'Room not found or already playing');
@@ -451,10 +462,15 @@ io.on('connection', (socket) => {
     broadcastRoomsList();
   });
 
-  socket.on('regenerateMap', () => {
+  socket.on('regenerateMap', (newSettings?: Partial<MapSettings>) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (room && room.status === 'playing' && room.canManageRoom(socket.id)) {
+      if (newSettings) {
+        room.updateSettings({ mapSettings: newSettings });
+        RoomRepository.updateSettings(currentRoomId, room.getSettings()).catch(console.error);
+        io.to(currentRoomId).emit('roomUpdate', room.getRoomInfo());
+      }
       room.regenerateMap();
       io.to(currentRoomId).emit('gameState', room.getState());
     }

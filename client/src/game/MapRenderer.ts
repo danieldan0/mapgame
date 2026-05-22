@@ -10,14 +10,13 @@ interface MapHighlights {
 export class MapRenderer {
   public app: PIXI.Application;
   public viewport!: Viewport;
-  
+
   private polyContainer!: PIXI.Container;
   private clickCallback?: (id: number) => void;
   private container: HTMLDivElement;
-  private highlights: MapHighlights = {
-    claimableTileIds: new Set(),
-    selectedTileIds: new Set(),
-  };
+  private highlights: MapHighlights = { claimableTileIds: new Set(), selectedTileIds: new Set() };
+  private worldWidth = 2000;
+  private worldHeight = 2000;
 
   constructor(container: HTMLDivElement) {
     this.container = container;
@@ -57,6 +56,14 @@ export class MapRenderer {
   public updateState(gameState: GameState, highlights: MapHighlights = this.highlights) {
     if (!this.polyContainer) return;
     this.highlights = highlights;
+
+    const mw = gameState.mapWidth ?? 2000;
+    const mh = gameState.mapHeight ?? 2000;
+    if (mw !== this.worldWidth || mh !== this.worldHeight) {
+      this.worldWidth = mw;
+      this.worldHeight = mh;
+      this.viewport.resize(this.container.clientWidth, this.container.clientHeight, mw, mh);
+    }
     
     this.polyContainer.removeChildren().forEach(child => child.destroy());
 

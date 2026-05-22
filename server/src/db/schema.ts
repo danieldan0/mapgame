@@ -1,4 +1,5 @@
 import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, unique } from 'drizzle-orm/pg-core';
+import type { MapSettings } from '@mapgame/shared';
 
 export const players = pgTable('players', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -17,6 +18,7 @@ export const rooms = pgTable('rooms', {
   isPrivate: boolean('is_private').notNull().default(false),
   passwordHash: text('password_hash'),
   maxPlayers: integer('max_players').notNull().default(6),
+  mapSettings: jsonb('map_settings').$type<Partial<MapSettings>>().notNull().default({}),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   startedAt: timestamp('started_at'),
   finishedAt: timestamp('finished_at'),

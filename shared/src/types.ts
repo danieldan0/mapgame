@@ -25,6 +25,8 @@ export interface GameState {
   phase: 'placement' | 'playing';
   turnState: TurnState;
   tileTypes: Record<string, TileType>;
+  mapWidth: number;
+  mapHeight: number;
 }
 
 export type PlannedActionType = 'EXPAND' | 'ATTACK';
@@ -70,6 +72,7 @@ export interface RoomInfo {
   isPrivate: boolean;
   hasPassword: boolean;
   maxPlayers: number;
+  mapSettings: MapSettings;
 }
 
 export interface RoleUpdateRequest {
@@ -87,11 +90,14 @@ export interface RoomSettingsRequest {
   isPrivate: boolean;
   password?: string;
   maxPlayers: number;
+  mapSettings?: Partial<MapSettings>;
 }
 
 export type CreateRoomRequest = RoomSettingsRequest;
 
-export type UpdateRoomSettingsRequest = Partial<RoomSettingsRequest>;
+export interface UpdateRoomSettingsRequest extends Partial<RoomSettingsRequest> {
+  mapSettings?: Partial<MapSettings>;
+}
 
 export interface JoinRoomRequest {
   roomId: string;
@@ -104,6 +110,35 @@ export interface InviteRoomInfo {
   status: 'waiting' | 'playing';
   hasPassword: boolean;
 }
+
+export interface MapSettings {
+  width: number;
+  height: number;
+  seed?: number;
+  seaLevel: number;
+  landTileSize: number;
+  seaTileSize: number;
+  maxCities: number;
+  cityMinDistRatio: number;
+  noiseWavelength: number;
+  noiseOctaves: number;
+  noisePersistence: number;
+  noiseLacunarity: number;
+}
+
+export const DEFAULT_MAP_SETTINGS: MapSettings = {
+  width: 2000,
+  height: 2000,
+  seaLevel: 0.48,
+  landTileSize: 42,
+  seaTileSize: 84,
+  maxCities: 20,
+  cityMinDistRatio: 0.1,
+  noiseWavelength: 750,
+  noiseOctaves: 6,
+  noisePersistence: 0.5,
+  noiseLacunarity: 2.0,
+};
 
 // Action Types for Client -> Server communication
 export type GameAction =

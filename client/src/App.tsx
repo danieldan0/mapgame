@@ -5,7 +5,7 @@ import { GameView } from './components/GameView.tsx'
 import { Lobby } from './components/Lobby.tsx'
 import { Room } from './components/Room.tsx'
 import { useAuth } from './hooks/useAuth.ts'
-import type { CreateRoomRequest, GameAction, GameState, InviteRoomInfo, JoinRoomRequest, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../shared/src/types.ts'
+import type { CreateRoomRequest, GameAction, GameState, InviteRoomInfo, JoinRoomRequest, MapSettings, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../shared/src/types.ts'
 import './App.css'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL ?? `${window.location.protocol}//${window.location.hostname}:3000`;
@@ -18,6 +18,7 @@ function App() {
   const [roomsList, setRoomsList] = useState<RoomInfo[]>([]);
   const [currentRoom, setCurrentRoom] = useState<RoomInfo | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [previewState, setPreviewState] = useState<GameState | null>(null);
   const [reconnectInfo, setReconnectInfo] = useState<{ roomId: string; roomName: string } | null>(null);
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('room'));
 
@@ -59,6 +60,10 @@ function App() {
       setGameState(newGameState);
     });
 
+    socket.on('mapPreview', (preview: GameState) => {
+      setPreviewState(preview);
+    });
+
     socket.on('error', (msg: string) => {
       alert(`Error: ${msg}`);
     });
@@ -96,6 +101,7 @@ function App() {
       socket.off('roomUpdate');
       socket.off('gameStarted');
       socket.off('gameState');
+      socket.off('mapPreview');
       socket.off('error');
       socket.off('kicked');
       socket.off('inviteRoomInfo');
@@ -139,6 +145,7 @@ function App() {
     socket.emit('leaveRoom');
     setCurrentRoom(null);
     setGameState(null);
+    setPreviewState(null);
     setViewState('LOBBY');
   };
 
@@ -178,8 +185,8 @@ function App() {
     socket.emit('previewAttack', defenderId);
   };
 
-  const handleRegenerate = () => {
-    socket.emit('regenerateMap');
+  const handleRegenerate = (settings?: Partial<MapSettings>) => {
+    socket.emit('regenerateMap', settings);
   };
 
   if (viewState === 'LOBBY') {
@@ -215,6 +222,7 @@ function App() {
       <Room
         currentRoom={currentRoom}
         socketId={socket.id}
+        previewState={previewState}
         handleLeaveRoom={handleLeaveRoom}
         handleSetReady={handleSetReady}
         handleSetColor={handleSetColor}

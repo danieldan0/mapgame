@@ -1,5 +1,7 @@
 import bcrypt from 'bcryptjs';
-import type { CreateRoomRequest, GameState, GameAction, Player, RoomInfo, PlayerInfo, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import type { CreateRoomRequest, GameState, GameAction, MapSettings, Player, RoomInfo, PlayerInfo, RoomRole, UpdateRoomSettingsRequest } from '@mapgame/shared';
+import { DEFAULT_MAP_SETTINGS } from '@mapgame/shared';
+
 import { PLAYER_COLORS } from '../constants';
 import { generateMap } from '../mapgen/generateMap';
 import { handleAction, haveAllPlayersActed, previewAttack, skipPlayersWithNoTiles, startPlacementPhase, startTurn } from './gameEngine';
@@ -13,10 +15,11 @@ export class GameRoom {
   private passwordHash: string | null;
   private hostPlayerId: number | null = null;
 
-  // Fired when a game starts (room status changes to 'playing')
   public onGameStart?: () => void;
-  // Fired at the end of each turn with the new state (use for snapshotting)
   public onTurnEnd?: (state: GameState) => void;
+  public onPreviewReady?: (preview: GameState) => void;
+
+  private lastPreview: GameState | null = null;
 
   private state: GameState;
   private players: Map<string, PlayerInfo> = new Map();
@@ -29,6 +32,7 @@ export class GameRoom {
   // tracks whether a disconnected player had already acted in the turn they left
   private disconnectedTurnInfo: Map<string, { hadActed: boolean; turn: number }> = new Map();
   private nextPlayerId = 1;
+  private mapSettings: Partial<MapSettings> = {};
 
   constructor(id: string, name: string, initialState?: GameState, settings?: Partial<CreateRoomRequest>) {
     this.id = id;
@@ -36,12 +40,19 @@ export class GameRoom {
     this.isPrivate = settings?.isPrivate ?? false;
     this.maxPlayers = clampMaxPlayers(settings?.maxPlayers);
     this.passwordHash = settings?.password?.trim() || null;
+    this.mapSettings = settings?.mapSettings ?? {};
     this.state = initialState ?? generateMap();
   }
 
   static fromSnapshot(id: string, name: string, gameState: GameState, settings?: Partial<CreateRoomRequest>): GameRoom {
-    const phase = (gameState as { phase?: 'placement' | 'playing' }).phase ?? 'playing';
-    const room = new GameRoom(id, name, { ...gameState, phase }, settings);
+    const raw = gameState as unknown as Record<string, unknown>;
+    const restored: GameState = {
+      ...gameState,
+      phase:     (raw.phase     as 'placement' | 'playing') ?? 'playing',
+      mapWidth:  (raw.mapWidth  as number) ?? 2000,
+      mapHeight: (raw.mapHeight as number) ?? 2000,
+    };
+    const room = new GameRoom(id, name, restored, settings);
     room.status = 'playing';
     return room;
   }
@@ -61,6 +72,7 @@ export class GameRoom {
       isPrivate: this.isPrivate,
       hasPassword: this.passwordHash !== null,
       maxPlayers: this.maxPlayers,
+      mapSettings: this.resolveMapSettings(),
     };
   }
 
@@ -76,7 +88,12 @@ export class GameRoom {
       isPrivate: this.isPrivate,
       password: this.passwordHash ?? '',
       maxPlayers: this.maxPlayers,
+      mapSettings: { ...this.mapSettings },
     };
+  }
+
+  private resolveMapSettings(): MapSettings {
+    return { ...DEFAULT_MAP_SETTINGS, ...this.mapSettings };
   }
 
   public hasOpenSeat(): boolean {
@@ -108,6 +125,33 @@ export class GameRoom {
     if (settings.maxPlayers !== undefined) {
       this.maxPlayers = Math.max(this.countRole('player'), clampMaxPlayers(settings.maxPlayers));
     }
+
+    if (settings.mapSettings !== undefined) {
+      const ms = settings.mapSettings;
+      if (ms.width      !== undefined) this.mapSettings.width      = Math.max(500,  Math.min(5000, Math.round(ms.width)));
+      if (ms.height     !== undefined) this.mapSettings.height     = Math.max(500,  Math.min(5000, Math.round(ms.height)));
+      if (ms.seaLevel   !== undefined) this.mapSettings.seaLevel   = Math.max(0.1,  Math.min(0.9,  ms.seaLevel));
+      if (ms.landTileSize !== undefined) this.mapSettings.landTileSize = Math.max(15, Math.min(150, Math.round(ms.landTileSize)));
+      if (ms.seaTileSize  !== undefined) this.mapSettings.seaTileSize  = Math.max(15, Math.min(300, Math.round(ms.seaTileSize)));
+      if (ms.maxCities        !== undefined) this.mapSettings.maxCities        = Math.max(0,    Math.min(50,  Math.round(ms.maxCities)));
+      if (ms.cityMinDistRatio !== undefined) this.mapSettings.cityMinDistRatio = Math.max(0.02, Math.min(0.4, ms.cityMinDistRatio));
+      if (ms.noiseWavelength  !== undefined) this.mapSettings.noiseWavelength  = Math.max(100,  Math.min(3000, Math.round(ms.noiseWavelength)));
+      if (ms.noiseOctaves     !== undefined) this.mapSettings.noiseOctaves     = Math.max(1,    Math.min(10,  Math.round(ms.noiseOctaves)));
+      if (ms.noisePersistence !== undefined) this.mapSettings.noisePersistence = Math.max(0.1,  Math.min(0.9, ms.noisePersistence));
+      if (ms.noiseLacunarity  !== undefined) this.mapSettings.noiseLacunarity  = Math.max(1.5,  Math.min(3.5, ms.noiseLacunarity));
+      if ('seed' in ms) this.mapSettings.seed = ms.seed;
+
+      if (this.status === 'waiting') this.generatePreview();
+    }
+  }
+
+  public generatePreview(): void {
+    this.lastPreview = generateMap({}, this.mapSettings);
+    this.onPreviewReady?.(this.lastPreview);
+  }
+
+  public getPreview(): GameState | null {
+    return this.lastPreview;
   }
 
   public addPlayer(socketId: string, name: string, persistentId?: string): string | undefined {
@@ -262,7 +306,7 @@ export class GameRoom {
 
   public startGame(): void {
     this.status = 'playing';
-    this.state = generateMap(this.getGamePlayers());
+    this.state = generateMap(this.getGamePlayers(), this.mapSettings);
     startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
     this.onGameStart?.();
@@ -273,7 +317,7 @@ export class GameRoom {
   }
 
   public regenerateMap(): void {
-    this.state = generateMap(this.getGamePlayers());
+    this.state = generateMap(this.getGamePlayers(), this.mapSettings);
     startPlacementPhase(this.state);
     this.skipDisconnectedPlayers();
   }

@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
-import type { RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../../shared/src/types';
+import React, { useEffect, useRef, useState } from 'react';
+import type { GameState, RoleUpdateRequest, RoomInfo, RoomRole, TransferHostRequest, UpdateRoomSettingsRequest } from '../../../shared/src/types';
+import { MapSettingsForm } from './MapSettingsForm';
+import { Map } from './Map';
 import { RoomSettingsForm } from './RoomSettingsForm';
 
 interface RoomProps {
   currentRoom: RoomInfo;
   socketId?: string;
+  previewState: GameState | null;
   handleLeaveRoom: () => void;
   handleSetReady: (isReady: boolean) => void;
   handleSetColor: (color: number) => void;
@@ -31,6 +34,7 @@ function colorToHex(color: number): string {
 export const Room: React.FC<RoomProps> = ({
   currentRoom,
   socketId,
+  previewState,
   handleLeaveRoom,
   handleSetReady,
   handleSetColor,
@@ -47,6 +51,7 @@ export const Room: React.FC<RoomProps> = ({
   const inviteLink = `${window.location.origin}${window.location.pathname}?room=${currentRoom.id}`;
   const [customColor, setCustomColor] = useState(me ? colorToHex(me.color) : '#ff4500');
   const [isEditingSettings, setIsEditingSettings] = useState(false);
+  const [isEditingMapSettings, setIsEditingMapSettings] = useState(false);
   const isHost = me?.roles.includes('host') ?? false;
   const canManageRoom = isHost || (me?.roles.includes('admin') ?? false);
   const isPlayer = me?.roles.includes('player') ?? false;
@@ -91,26 +96,47 @@ export const Room: React.FC<RoomProps> = ({
       </div>
 
       {canManageRoom && (
-        <div style={{ marginBottom: 20 }}>
-          <button onClick={() => setIsEditingSettings(!isEditingSettings)} style={{ padding: '6px 12px' }}>
-            {isEditingSettings ? 'Close Settings' : 'Edit Room Settings'}
-          </button>
-          {isEditingSettings && (
-            <div style={{ marginTop: 12, border: '1px solid #555', borderRadius: 6, padding: 12 }}>
-              <RoomSettingsForm
-                initialSettings={{
-                  name: currentRoom.name,
-                  isPrivate: currentRoom.isPrivate,
-                  maxPlayers: currentRoom.maxPlayers,
-                }}
-                submitLabel="Save Settings"
-                onSubmit={(settings) => {
-                  handleUpdateRoomSettings(settings);
-                  setIsEditingSettings(false);
-                }}
-              />
-            </div>
-          )}
+        <div style={{ marginBottom: 20, display: 'grid', gap: 10 }}>
+          <div>
+            <button onClick={() => setIsEditingSettings(!isEditingSettings)} style={{ padding: '6px 12px' }}>
+              {isEditingSettings ? 'Close Settings' : 'Edit Room Settings'}
+            </button>
+            {isEditingSettings && (
+              <div style={{ marginTop: 12, border: '1px solid #555', borderRadius: 6, padding: 12 }}>
+                <RoomSettingsForm
+                  initialSettings={{
+                    name: currentRoom.name,
+                    isPrivate: currentRoom.isPrivate,
+                    maxPlayers: currentRoom.maxPlayers,
+                  }}
+                  submitLabel="Save Settings"
+                  onSubmit={(settings) => {
+                    handleUpdateRoomSettings(settings);
+                    setIsEditingSettings(false);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <button onClick={() => setIsEditingMapSettings(!isEditingMapSettings)} style={{ padding: '6px 12px' }}>
+              {isEditingMapSettings ? 'Close Map Settings' : 'Edit Map Settings'}
+            </button>
+            {isEditingMapSettings && (
+              <div style={{ marginTop: 12, border: '1px solid #555', borderRadius: 6, padding: 12 }}>
+                <MapSettingsForm
+                  initialSettings={currentRoom.mapSettings}
+                  submitLabel="Save Map Settings"
+                  onSubmit={(settings) => {
+                    handleUpdateRoomSettings({ mapSettings: settings });
+                    setIsEditingMapSettings(false);
+                  }}
+                  onCancel={() => setIsEditingMapSettings(false)}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -227,10 +253,33 @@ export const Room: React.FC<RoomProps> = ({
       {playerCount > 0 && !currentRoom.players.filter(p => p.roles.includes('player')).every(p => p.isReady) && (
         <p style={{ marginTop: '20px', color: '#666' }}>Waiting for all players to ready up...</p>
       )}
+
+      {previewState && <MapPreview previewState={previewState} />}
     </div>
   );
 };
 
 function formatRoles(roles: RoomRole[]): string {
   return roles.map(role => role[0].toUpperCase() + role.slice(1)).join(', ');
+}
+
+function MapPreview({ previewState }: { previewState: GameState }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => e.preventDefault();
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
+
+  return (
+    <div style={{ marginTop: 30 }}>
+      <h2>Map Preview</h2>
+      <div ref={containerRef} style={{ height: 400, border: '1px solid #555', borderRadius: 6, overflow: 'hidden' }}>
+        <Map gameState={previewState} />
+      </div>
+    </div>
+  );
 }

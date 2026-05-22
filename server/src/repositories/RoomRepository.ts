@@ -13,6 +13,7 @@ export class RoomRepository {
       isPrivate: settings.isPrivate,
       passwordHash: settings.password ?? null,
       maxPlayers: settings.maxPlayers,
+      mapSettings: settings.mapSettings ?? {},
     }).returning();
     return result[0];
   }
@@ -23,6 +24,8 @@ export class RoomRepository {
     if (settings.isPrivate !== undefined) updates.isPrivate = settings.isPrivate;
     if (settings.password !== undefined) updates.passwordHash = settings.password || null;
     if (settings.maxPlayers !== undefined) updates.maxPlayers = settings.maxPlayers;
+
+    if (settings.mapSettings !== undefined) updates.mapSettings = settings.mapSettings;
 
     if (Object.keys(updates).length === 0) return;
     await db.update(rooms).set(updates).where(eq(rooms.id, id));
