@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Map } from './Map';
 import { MapSettingsForm } from './MapSettingsForm';
+import { ReplayViewer } from './ReplayViewer';
 import { RuleSettingsForm } from './RuleSettingsForm';
 import type { DiceFormula, GameAction, GameState, MapSettings, PlannedActionType, RoomInfo, RuleSettings, Tile } from '../../../shared/src/types';
 
@@ -13,6 +14,12 @@ interface GameViewProps {
   onRegenerate: (settings?: Partial<MapSettings>) => void;
   onUpdateRoomSettings: (settings: { ruleSettings: RuleSettings }) => void;
   onLeaveRoom: () => void;
+  onRequestReplay: () => void;
+  replayTurns: number[] | null;
+  currentReplayTurn: number | null;
+  replaySnapshot: GameState | null;
+  onRequestSnapshot: (turn: number) => void;
+  onCloseReplay: () => void;
 }
 
 function getDefenseRollKey(attackerId: number, defenderId: number): string {
@@ -50,7 +57,13 @@ export const GameView: React.FC<GameViewProps> = ({
   onPreviewAttack,
   onRegenerate,
   onUpdateRoomSettings,
-  onLeaveRoom
+  onLeaveRoom,
+  onRequestReplay,
+  replayTurns,
+  currentReplayTurn,
+  replaySnapshot,
+  onRequestSnapshot,
+  onCloseReplay,
 }) => {
   const [actionType, setActionType] = useState<PlannedActionType>('EXPAND');
   const [selectedTileIds, setSelectedTileIds] = useState<number[]>([]);
@@ -363,6 +376,9 @@ export const GameView: React.FC<GameViewProps> = ({
                   </button>
                 </>
               )}
+              <button onClick={onRequestReplay} style={{ padding: '5px 10px', cursor: 'pointer' }}>
+                History
+              </button>
               <button onClick={onLeaveRoom} style={{ padding: '5px 10px', cursor: 'pointer', background: '#f44336', color: 'white', border: 'none', borderRadius: '2px' }}>
                 Leave Match
               </button>
@@ -412,6 +428,15 @@ export const GameView: React.FC<GameViewProps> = ({
             />
           </div>
         </div>
+      )}
+      {replayTurns !== null && (
+        <ReplayViewer
+          turns={replayTurns}
+          currentTurn={currentReplayTurn}
+          snapshotState={replaySnapshot}
+          onRequestTurn={onRequestSnapshot}
+          onClose={onCloseReplay}
+        />
       )}
     </div>
   );

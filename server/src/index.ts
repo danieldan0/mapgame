@@ -511,6 +511,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('requestReplay', async () => {
+    if (!currentRoomId) return;
+    const turns = await SnapshotRepository.getTurnNumbers(currentRoomId);
+    socket.emit('replayInfo', { turns });
+  });
+
+  socket.on('requestSnapshot', async ({ turn }: { turn: number }) => {
+    if (!currentRoomId) return;
+    const snapshot = await SnapshotRepository.getByTurn(currentRoomId, turn);
+    if (snapshot) {
+      socket.emit('snapshotData', { turn: snapshot.turnNumber, state: snapshot.state });
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log(`user disconnected: ${socket.id}`);
     if (currentRoomId) {

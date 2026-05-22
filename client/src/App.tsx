@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import { CreateRoom } from './components/CreateRoom.tsx'
 import { GameView } from './components/GameView.tsx'
@@ -20,6 +20,10 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [previewState, setPreviewState] = useState<GameState | null>(null);
   const [reconnectInfo, setReconnectInfo] = useState<{ roomId: string; roomName: string } | null>(null);
+  const [replayTurns, setReplayTurns] = useState<number[] | null>(null);
+  const [currentReplayTurn, setCurrentReplayTurn] = useState<number | null>(null);
+  const [replaySnapshot, setReplaySnapshot] = useState<GameState | null>(null);
+  const snapshotCache = useRef<Map<number, GameState>>(new Map());
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('room'));
 
   const { accountUsername, authError, login, register, logout, dismissAuthError } = useAuth(socket);
@@ -94,6 +98,26 @@ function App() {
       window.history.replaceState({}, '', window.location.pathname);
     });
 
+    socket.on('replayInfo', ({ turns }: { turns: number[] }) => {
+      snapshotCache.current.clear();
+      setReplayTurns(turns);
+      setCurrentReplayTurn(null);
+      setReplaySnapshot(null);
+      if (turns.length > 0) {
+        const last = turns[turns.length - 1];
+        setCurrentReplayTurn(last);
+        socket.emit('requestSnapshot', { turn: last });
+      }
+    });
+
+    socket.on('snapshotData', ({ turn, state }: { turn: number; state: GameState }) => {
+      snapshotCache.current.set(turn, state);
+      setCurrentReplayTurn(t => {
+        if (t === turn) setReplaySnapshot(state);
+        return t;
+      });
+    });
+
     return () => {
       socket.off('connect', doAuthenticate);
       socket.off('reconnectAvailable');
@@ -106,6 +130,8 @@ function App() {
       socket.off('kicked');
       socket.off('inviteRoomInfo');
       socket.off('inviteRoomError');
+      socket.off('replayInfo');
+      socket.off('snapshotData');
     };
   }, []);
 
@@ -189,6 +215,27 @@ function App() {
     socket.emit('regenerateMap', settings);
   };
 
+  const handleRequestReplay = () => {
+    socket.emit('requestReplay');
+  };
+
+  const handleRequestSnapshot = (turn: number) => {
+    setCurrentReplayTurn(turn);
+    const cached = snapshotCache.current.get(turn);
+    if (cached) {
+      setReplaySnapshot(cached);
+    } else {
+      setReplaySnapshot(null);
+      socket.emit('requestSnapshot', { turn });
+    }
+  };
+
+  const handleCloseReplay = () => {
+    setReplayTurns(null);
+    setCurrentReplayTurn(null);
+    setReplaySnapshot(null);
+  };
+
   if (viewState === 'LOBBY') {
     return (
       <Lobby
@@ -247,6 +294,12 @@ function App() {
       onRegenerate={handleRegenerate}
       onUpdateRoomSettings={handleUpdateRoomSettings}
       onLeaveRoom={handleLeaveRoom}
+      onRequestReplay={handleRequestReplay}
+      replayTurns={replayTurns}
+      currentReplayTurn={currentReplayTurn}
+      replaySnapshot={replaySnapshot}
+      onRequestSnapshot={handleRequestSnapshot}
+      onCloseReplay={handleCloseReplay}
     />
   );
 }
